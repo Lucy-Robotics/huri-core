@@ -139,10 +139,14 @@ def test_a_frame_on_an_unknown_topic_is_dropped_not_fatal():
 
 
 def test_an_unknown_module_is_rejected_with_the_servers_modules():
-    ws = session(FakeSocket(handshake({"a": {"name": "stt"}}, [], ["toy.word"])))
+    # A name no package provides: a curated one ("stt") is "installed but not
+    # enabled" in an environment that also has huri-modules installed.
+    ws = session(
+        FakeSocket(handshake({"a": {"name": "no_such_module"}}, [], ["toy.word"]))
+    )
     (reply,) = ws.sent
     assert reply["type"] == "session_error"
-    assert "Unknown module 'stt'" in reply["error"]
+    assert "Unknown module 'no_such_module'" in reply["error"]
     assert reply["server_modules"] == ["reverse", "upper"]
     assert ws.closed == 1008
 
