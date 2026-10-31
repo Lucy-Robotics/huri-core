@@ -33,6 +33,14 @@ same lint (black, isort, flake8, mypy) and pytest as separate steps, not
 `make check` itself; in `huri-modules`, mypy gates only the files that are
 already clean.
 
+In the four repositories, CI runs on every push, to any branch, and on every
+pull request: static analysis, formatting, tests and a build. Every run, passed
+or failed, is listed with its logs in the repository's Actions tab:
+[huri-core](https://github.com/Lucy-Robotics/huri-core/actions/workflows/ci.yml),
+[huri-modules](https://github.com/Lucy-Robotics/huri-modules/actions/workflows/ci.yml),
+[HuRI-CLI](https://github.com/Lucy-Robotics/HuRI-CLI/actions/workflows/ci.yml),
+[huri-plugin-template](https://github.com/Lucy-Robotics/huri-plugin-template/actions/workflows/ci.yml).
+
 ## Versioning, in short
 
 - `huri-core`, `huri-modules` and `huri-cli` each follow semver, with tags
