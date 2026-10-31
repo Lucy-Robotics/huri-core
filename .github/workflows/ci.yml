@@ -6,8 +6,6 @@
 name: CI
 
 on:
-  # Every branch, so a commit is checked before a pull request exists. Tags
-  # are not branches: pushing a release tag does not run it again.
   push:
     branches: ["**"]
   pull_request:
