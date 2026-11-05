@@ -1,5 +1,7 @@
 # huri-core
 
+[![CI](https://github.com/Lucy-Robotics/huri-core/actions/workflows/ci.yml/badge.svg)](https://github.com/Lucy-Robotics/huri-core/actions/workflows/ci.yml)
+
 The framework of **HuRI**, a realtime, modular conversational pipeline for
 robots and avatars: speech in, an answer out as text, a voice and gestures. A
 multi-client server runs, per client session, a pipeline of modules (voice
@@ -15,6 +17,80 @@ tested with none installed. This repository is also HuRI's front door: the
 ecosystem below, [how the pieces fit](docs/ARCHITECTURE.md) and
 [where to contribute](CONTRIBUTING.md). (It was called `Lucy-Robotics/HuRI`
 before the split; GitHub redirects the old URL here.)
+
+## What HuRI does
+
+- **Talks with people through a body.** It listens (voice activity
+  detection, speech-to-text, the emotion in the voice), answers with an LLM
+  that retrieves from documents and from past conversations, and replies as
+  streamed text, speech and co-speech gestures.
+- **Serves many clients at once.** One server runs a session per client (a
+  robot, an avatar, a website, a terminal), each with its own pipeline of
+  modules. Each user has their own memory and documents.
+- **Is assembled from plugins.** Each module is a Python package found through
+  entry points. The server enables only the modules its operator lists,
+  checks their manifests and version ranges at startup, and refuses a session
+  that asks for anything else.
+- **Runs where you have it.** On a CPU alone, the pipeline keeps voice in and
+  voice out. A GPU speeds up speech recognition, and on NVIDIA the installer
+  also plans CosyVoice and gestures. It installs on one machine with the
+  installer, and comes with Docker images and a Helm chart for Kubernetes.
+- **Comes with what you need to build on it**: a client SDK, a reference
+  command-line client, a module template, and a harness that tests a module
+  without Ray or a GPU.
+
+## What HuRI does not do
+
+- **It does not drive motors.** Gestures are motion data (SMPL-X
+  parameters). Turning them into joint commands is the job of the robot's
+  client or of an actuation module, as in
+  [HuRI-Lucy](https://github.com/Lucy-Robotics/HuRI-Lucy). A module that moves
+  hardware runs only if the operator also lists it in
+  `HURI_ACTUATION_MODULES`.
+- **It does not train models.** It runs existing ones (faster-whisper, Piper,
+  CosyVoice, HuBERT, EMAGE, and an LLM served by Ollama, llama.cpp or another
+  OpenAI-compatible API), and the quality of each answer, voice and gesture is
+  theirs.
+- **It is not a hosted service.** You run the server yourself. Once the models
+  are downloaded it runs with no network at all, and a conversation goes out
+  only if you point HuRI at a remote LLM or a remote Qdrant. With a network,
+  the libraries it uses still contact outside services when the server starts:
+  Hugging Face, Ray's usage statistics and a Microsoft telemetry endpoint.
+- **Its server has no screen of its own.** The framework and the curated modules
+  draw nothing. The graphical interface is a separate client,
+  [huri-playground](https://github.com/Lucy-Robotics/huri-playground): a web
+  page to pick the modules, talk with HuRI and see Mouse-Man gesture when his 3D
+  model is present. See [Built with HuRI](#built-with-huri).
+- **It is not certified for safety.** HuRI is a research project. Hardware
+  that moves near people needs its own safety measures.
+- **Its server is tested on Linux only**: the installer, the Docker images
+  and CI are Linux. The shipped configuration speaks English.
+
+## Demo
+
+![The HuRI-Playground page connected to a running HuRI: the modules HuRI runs for the visitor, grouped as hear you, read your emotion, understand and answer, speak and move, and a button to start the conversation](docs/images/playground.png)
+
+[huri-playground](https://github.com/Lucy-Robotics/huri-playground) connected
+to a HuRI running nine curated modules, on a machine with no GPU: a clean Ubuntu
+24.04 container, 16 CPU cores, `qwen2.5:1.5b` as the LLM, gestures forced on
+(2026-11-05). In that run:
+
+```text
+typed   What is the capital of France? Answer in one short sentence.
+text    The capital of France is Paris.        first word after 0.4 s
+speech  1.8 s of audio                         starts after 0.8 s
+motion  SMPL-X frames, 30 per second           start after 2.1 s
+
+spoken  What is the capital of Japan?          heard by VAD and speech-to-text
+text    The capital of Japan is Tokyo.
+```
+
+![The output of ./install.sh --plan-only on a machine with no GPU: faster-whisper, Ollama, Piper and HuBERT on the CPU, gestures off, and the verdict "voice pipeline: voice in, voice out, no gesture"](docs/images/install-plan-cpu.svg)
+
+Without `--force-gesture`, the installer plans the largest pipeline that runs
+at realtime on the machine: here speech in and out and answers from a local
+LLM, without gestures. The [minimal end to end example](#a-minimal-end-to-end-example)
+shows a module, a server and a client in about 60 lines.
 
 ## HuRI ecosystem
 
@@ -36,24 +112,35 @@ before the split; GitHub redirects the old URL here.)
 | [huri-modules](https://github.com/Lucy-Robotics/huri-modules) | the curated set, released and tested together: [huri-events](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-events) (one event class per `huri.*` topic), the modules ([vad](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-module-vad), [stt](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-module-stt), [tag](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-module-tag), [emo](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-module-emo), [rag](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-module-rag), [tts](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-module-tts), [mov](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-module-mov)), the registry of verified modules and [huri-hub](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-hub) (`huri hub`), install and deploy (`install.sh`, Docker, Helm) |
 | [huri-plugin-template](https://github.com/Lucy-Robotics/huri-plugin-template) | the starter for a new module (a GitHub template repository) |
 | [HuRI-CLI](https://github.com/Lucy-Robotics/HuRI-CLI) | the reference command-line client, a use case of the client SDK; also the source of `huri`, a convenience metapackage (`huri-core[client]` + `huri-cli`) |
-| [HuRI-InMoov](https://github.com/Lucy-Robotics/HuRI-InMoov) | HuRI driving an InMoov robot: an actuation module, its events and the robot-side client |
+| [HuRI-Lucy](https://github.com/Lucy-Robotics/HuRI-Lucy) | HuRI driving an InMoov robot: an actuation module, its events and the robot-side client |
 
 ### Built with HuRI
 
-Use cases: clients built on HuRI, each in its own repository, with its own
-versions, not part of HuRI itself. Their repository names start with `HuRI`;
-the repositories of HuRI itself are lowercase `huri-*`, named like their
-packages. A use case depends on `huri-core[client]`
-and an event package (and on its own module package, when it brings one).
+Clients and modules built on HuRI, each in its own repository, with its own
+versions, not part of HuRI itself. A use case depends on `huri-core[client]`,
+on an event package unless it only relays events, and on its own module package
+when it brings one. A module depends on `huri-core[server]` and the events it
+uses.
 
-| Use case | What it is |
-|---|---|
-| [HuRI-CLI](https://github.com/Lucy-Robotics/HuRI-CLI) | the reference client: microphone and prompt in, text, voice and a gesture view out |
-| [HuRI_ATP_testsite](https://github.com/Lucy-Robotics/HuRI_ATP_testsite) | the acceptance test site: a browser console that launches HuRI and drives a session, to exercise the features (F1-F19) of the [beta test plan](docs/btp.md); the site calls it the ATP and uses the same feature IDs |
-| HuRI_website_demo (private) | a demo website: a 3D talking character |
-| [HuRI-InMoov](https://github.com/Lucy-Robotics/HuRI-InMoov) | an InMoov robot that listens, answers and gestures while it speaks |
+| Use case | What it is | State |
+|---|---|---|
+| [HuRI-CLI](https://github.com/Lucy-Robotics/HuRI-CLI) | the reference client: microphone and prompt in, text, voice and a gesture view out | released |
+| [huri-playground](https://github.com/Lucy-Robotics/huri-playground) | a web page to talk with HuRI, then rate it (Godspeed and RoSAS questionnaires): visitors pick the modules, type or speak, hear the voice and see Mouse-Man gesture when the model is present | `0.1.0.dev0` |
+| [HuRI_ATP_testsite](https://github.com/Lucy-Robotics/HuRI_ATP_testsite) | the acceptance test site: a browser console that launches HuRI and drives a session, to exercise the features of the [beta test plan](docs/btp.md); the site calls it the ATP and uses the same feature IDs | its `master` still uses the HuRI repository from before the split |
+| [HuRI-Lucy](https://github.com/Lucy-Robotics/HuRI-Lucy) | an InMoov robot that listens, answers and gestures while it speaks: SMPL-X gestures to servo angles, and a robot-side client with its own safety limits | scaffold: the ranges are not calibrated and the fingers do not move yet |
+| HuRI_website_demo (private) | a demo website: a 3D talking character | private |
+
+| Module | What it does | State |
+|---|---|---|
+| [huri-module-think](https://github.com/Lucy-Robotics/huri-module-think) | the robot thinks visibly while the answer is being prepared: generated SMPL-X thinking poses and spoken hesitations in the TTS's voice, on a CPU | `0.1.0`, not in the verified registry |
+| [huri-module-lips-sync](https://github.com/Lucy-Robotics/huri-module-lips-sync) | lip sync for an avatar or a robot face: 52 ARKit blend shape weights at 30 frames a second, in step with the voice, from LAM Audio2Expression on a GPU or a CPU | in review: its code is on branch `mvr/lips-sync` |
 
 ## Install
+
+[docs/INSTALL.md](docs/INSTALL.md) covers the whole install of HuRI: the
+prerequisites, the steps for the pipeline, a module or a client, the
+configuration files, every environment variable and how to check that it
+works. This section is about huri-core alone.
 
 huri-core is released on [PyPI](https://pypi.org/project/huri-core/) and as
 git tags (`X.Y.Z`), both from the same commit. Python 3.10 to 3.12.
@@ -511,7 +598,9 @@ make check    # both
 
 CI (`.github/workflows/ci.yml`) runs the lint and the link check, the tests
 on Python 3.10 to 3.12, the tests with only `huri-core[client]` installed (no
-Ray, no FastAPI), and a wheel build.
+Ray, no FastAPI), and a wheel build. What the static analysers reported on the
+four core repositories when the quality work started is in the
+[static analysis baseline](docs/quality/static-analysis-baseline-2026-10-31.md).
 
 Layout:
 
@@ -527,7 +616,8 @@ Layout:
   `huri.commands` entry points
 - `tests/core/` — everything above, with toy modules and events only
 - `docs/` — [ARCHITECTURE.md](docs/ARCHITECTURE.md) (how the HuRI repositories
-  fit) and the beta test plan ([btp.md](docs/btp.md), [btp.pdf](docs/btp.pdf))
+  fit), the beta test plan ([btp.md](docs/btp.md), [btp.pdf](docs/btp.pdf))
+  and `quality/` (the static analysis reports)
 - `scripts/check_links.py` — the link checker of README.md, CONTRIBUTING.md,
   RELEASING.md and docs/ (`--siblings DIR` also resolves deep links into
   checkouts of the other repositories, `--external` fetches web links);

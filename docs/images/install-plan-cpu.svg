@@ -1,0 +1,193 @@
+<svg class="rich-terminal" viewBox="0 0 1897 879.5999999999999" xmlns="http://www.w3.org/2000/svg">
+    <!-- Generated with Rich https://www.textualize.io -->
+    <style>
+
+    @font-face {
+        font-family: "Fira Code";
+        src: local("FiraCode-Regular"),
+                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff2/FiraCode-Regular.woff2") format("woff2"),
+                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff/FiraCode-Regular.woff") format("woff");
+        font-style: normal;
+        font-weight: 400;
+    }
+    @font-face {
+        font-family: "Fira Code";
+        src: local("FiraCode-Bold"),
+                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff2/FiraCode-Bold.woff2") format("woff2"),
+                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff/FiraCode-Bold.woff") format("woff");
+        font-style: bold;
+        font-weight: 700;
+    }
+
+    .terminal-4159003628-matrix {
+        font-family: Fira Code, monospace;
+        font-size: 20px;
+        line-height: 24.4px;
+        font-variant-east-asian: full-width;
+    }
+
+    .terminal-4159003628-title {
+        font-size: 18px;
+        font-weight: bold;
+        font-family: arial;
+    }
+
+    .terminal-4159003628-r1 { fill: #98a84b;font-weight: bold }
+.terminal-4159003628-r2 { fill: #c5c8c6 }
+.terminal-4159003628-r3 { fill: #68a0b3;font-weight: bold }
+.terminal-4159003628-r4 { fill: #d0b344;font-weight: bold }
+    </style>
+
+    <defs>
+    <clipPath id="terminal-4159003628-clip-terminal">
+      <rect x="0" y="0" width="1877.8" height="828.5999999999999" />
+    </clipPath>
+    <clipPath id="terminal-4159003628-line-0">
+    <rect x="0" y="1.5" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-1">
+    <rect x="0" y="25.9" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-2">
+    <rect x="0" y="50.3" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-3">
+    <rect x="0" y="74.7" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-4">
+    <rect x="0" y="99.1" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-5">
+    <rect x="0" y="123.5" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-6">
+    <rect x="0" y="147.9" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-7">
+    <rect x="0" y="172.3" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-8">
+    <rect x="0" y="196.7" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-9">
+    <rect x="0" y="221.1" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-10">
+    <rect x="0" y="245.5" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-11">
+    <rect x="0" y="269.9" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-12">
+    <rect x="0" y="294.3" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-13">
+    <rect x="0" y="318.7" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-14">
+    <rect x="0" y="343.1" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-15">
+    <rect x="0" y="367.5" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-16">
+    <rect x="0" y="391.9" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-17">
+    <rect x="0" y="416.3" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-18">
+    <rect x="0" y="440.7" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-19">
+    <rect x="0" y="465.1" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-20">
+    <rect x="0" y="489.5" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-21">
+    <rect x="0" y="513.9" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-22">
+    <rect x="0" y="538.3" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-23">
+    <rect x="0" y="562.7" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-24">
+    <rect x="0" y="587.1" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-25">
+    <rect x="0" y="611.5" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-26">
+    <rect x="0" y="635.9" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-27">
+    <rect x="0" y="660.3" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-28">
+    <rect x="0" y="684.7" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-29">
+    <rect x="0" y="709.1" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-30">
+    <rect x="0" y="733.5" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-31">
+    <rect x="0" y="757.9" width="1878.8" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-4159003628-line-32">
+    <rect x="0" y="782.3" width="1878.8" height="24.65"/>
+            </clipPath>
+    </defs>
+
+    <rect fill="#292929" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="1895" height="877.6" rx="8"/><text class="terminal-4159003628-title" fill="#c5c8c6" text-anchor="middle" x="947" y="27">huri-modules:&#160;./install.sh&#160;--plan-only&#160;(no&#160;GPU)</text>
+            <g transform="translate(26,22)">
+            <circle cx="0" cy="0" r="7" fill="#ff5f57"/>
+            <circle cx="22" cy="0" r="7" fill="#febc2e"/>
+            <circle cx="44" cy="0" r="7" fill="#28c840"/>
+            </g>
+
+    <g transform="translate(9, 41)" clip-path="url(#terminal-4159003628-clip-terminal)">
+
+    <g class="terminal-4159003628-matrix">
+    <text class="terminal-4159003628-r1" x="0" y="20" textLength="317.2" clip-path="url(#terminal-4159003628-line-0)">$&#160;./install.sh&#160;--plan-only</text><text class="terminal-4159003628-r2" x="1878.8" y="20" textLength="12.2" clip-path="url(#terminal-4159003628-line-0)">
+</text><text class="terminal-4159003628-r2" x="0" y="44.4" textLength="500.2" clip-path="url(#terminal-4159003628-line-1)">HuRI&#160;local&#160;installer&#160;—&#160;/work/huri-modules</text><text class="terminal-4159003628-r2" x="1878.8" y="44.4" textLength="12.2" clip-path="url(#terminal-4159003628-line-1)">
+</text><text class="terminal-4159003628-r2" x="1878.8" y="68.8" textLength="12.2" clip-path="url(#terminal-4159003628-line-2)">
+</text><text class="terminal-4159003628-r3" x="0" y="93.2" textLength="134.2" clip-path="url(#terminal-4159003628-line-3)">==&gt;&#160;Machine</text><text class="terminal-4159003628-r2" x="1878.8" y="93.2" textLength="12.2" clip-path="url(#terminal-4159003628-line-3)">
+</text><text class="terminal-4159003628-r2" x="0" y="117.6" textLength="378.2" clip-path="url(#terminal-4159003628-line-4)">&#160;&#160;&#160;&#160;os&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;ubuntu&#160;24.04</text><text class="terminal-4159003628-r2" x="1878.8" y="117.6" textLength="12.2" clip-path="url(#terminal-4159003628-line-4)">
+</text><text class="terminal-4159003628-r2" x="0" y="142" textLength="756.4" clip-path="url(#terminal-4159003628-line-5)">&#160;&#160;&#160;&#160;cpu/ram&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;16&#160;cores,&#160;30.7&#160;GiB&#160;RAM&#160;(13.2&#160;GiB&#160;available)</text><text class="terminal-4159003628-r2" x="1878.8" y="142" textLength="12.2" clip-path="url(#terminal-4159003628-line-5)">
+</text><text class="terminal-4159003628-r2" x="0" y="166.4" textLength="658.8" clip-path="url(#terminal-4159003628-line-6)">&#160;&#160;&#160;&#160;disk&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;10.0&#160;GiB&#160;free&#160;at&#160;/work/huri-modules</text><text class="terminal-4159003628-r2" x="1878.8" y="166.4" textLength="12.2" clip-path="url(#terminal-4159003628-line-6)">
+</text><text class="terminal-4159003628-r2" x="0" y="190.8" textLength="585.6" clip-path="url(#terminal-4159003628-line-7)">&#160;&#160;&#160;&#160;gpu&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;none&#160;detected&#160;—&#160;CPU-only&#160;plan</text><text class="terminal-4159003628-r2" x="1878.8" y="190.8" textLength="12.2" clip-path="url(#terminal-4159003628-line-7)">
+</text><text class="terminal-4159003628-r2" x="0" y="215.2" textLength="573.4" clip-path="url(#terminal-4159003628-line-8)">&#160;&#160;&#160;&#160;python&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;/usr/bin/python3.12&#160;(3.12.3)</text><text class="terminal-4159003628-r2" x="1878.8" y="215.2" textLength="12.2" clip-path="url(#terminal-4159003628-line-8)">
+</text><text class="terminal-4159003628-r2" x="0" y="239.6" textLength="951.6" clip-path="url(#terminal-4159003628-line-9)">&#160;&#160;&#160;&#160;huri-core&#160;&#160;&#160;&#160;&#160;&#160;git&#160;ref&#160;0.4.0&#160;of&#160;https://github.com/Lucy-Robotics/huri-core</text><text class="terminal-4159003628-r2" x="1878.8" y="239.6" textLength="12.2" clip-path="url(#terminal-4159003628-line-9)">
+</text><text class="terminal-4159003628-r2" x="0" y="264" textLength="268.4" clip-path="url(#terminal-4159003628-line-10)">&#160;&#160;&#160;&#160;pkg&#160;manager&#160;&#160;&#160;&#160;apt</text><text class="terminal-4159003628-r2" x="1878.8" y="264" textLength="12.2" clip-path="url(#terminal-4159003628-line-10)">
+</text><text class="terminal-4159003628-r2" x="0" y="288.4" textLength="1854.4" clip-path="url(#terminal-4159003628-line-11)">&#160;&#160;&#160;&#160;packages&#160;&#160;&#160;&#160;&#160;&#160;&#160;build-essential&#160;git&#160;curl&#160;ca-certificates&#160;pkg-config&#160;unzip&#160;ffmpeg&#160;libsndfile1&#160;libportaudio2&#160;python3-dev&#160;python3.12-venv&#160;python3.12-dev</text><text class="terminal-4159003628-r2" x="1878.8" y="288.4" textLength="12.2" clip-path="url(#terminal-4159003628-line-11)">
+</text><text class="terminal-4159003628-r2" x="0" y="312.8" textLength="280.6" clip-path="url(#terminal-4159003628-line-12)">&#160;&#160;&#160;&#160;container&#160;&#160;&#160;&#160;&#160;&#160;none</text><text class="terminal-4159003628-r2" x="1878.8" y="312.8" textLength="12.2" clip-path="url(#terminal-4159003628-line-12)">
+</text><text class="terminal-4159003628-r2" x="0" y="337.2" textLength="390.4" clip-path="url(#terminal-4159003628-line-13)">&#160;&#160;&#160;&#160;ollama&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;not&#160;installed</text><text class="terminal-4159003628-r2" x="1878.8" y="337.2" textLength="12.2" clip-path="url(#terminal-4159003628-line-13)">
+</text><text class="terminal-4159003628-r2" x="1878.8" y="361.6" textLength="12.2" clip-path="url(#terminal-4159003628-line-14)">
+</text><text class="terminal-4159003628-r3" x="0" y="386" textLength="231.8" clip-path="url(#terminal-4159003628-line-15)">==&gt;&#160;Capability&#160;plan</text><text class="terminal-4159003628-r2" x="1878.8" y="386" textLength="12.2" clip-path="url(#terminal-4159003628-line-15)">
+</text><text class="terminal-4159003628-r2" x="0" y="410.4" textLength="793" clip-path="url(#terminal-4159003628-line-16)">&#160;&#160;&#160;&#160;MODULE&#160;&#160;&#160;&#160;BACKEND&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;DEVICE&#160;&#160;BUDGET&#160;&#160;&#160;&#160;&#160;&#160;&#160;WHY</text><text class="terminal-4159003628-r2" x="1878.8" y="410.4" textLength="12.2" clip-path="url(#terminal-4159003628-line-16)">
+</text><text class="terminal-4159003628-r2" x="0" y="434.8" textLength="1220" clip-path="url(#terminal-4159003628-line-17)">&#160;&#160;&#160;&#160;────────────────────────────────────────────────────────────────────────────────────────────────</text><text class="terminal-4159003628-r2" x="1878.8" y="434.8" textLength="12.2" clip-path="url(#terminal-4159003628-line-17)">
+</text><text class="terminal-4159003628-r2" x="0" y="459.2" textLength="1220" clip-path="url(#terminal-4159003628-line-18)">&#160;&#160;&#160;&#160;stt&#160;&#160;&#160;&#160;&#160;&#160;&#160;faster-whisper&#160;base&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;cpu&#160;&#160;&#160;&#160;&#160;0.7&#160;GiB&#160;ram&#160;&#160;int8&#160;on&#160;16&#160;cores&#160;—&#160;realtime&#160;for&#160;&#x27;base&#x27;</text><text class="terminal-4159003628-r2" x="1878.8" y="459.2" textLength="12.2" clip-path="url(#terminal-4159003628-line-18)">
+</text><text class="terminal-4159003628-r2" x="0" y="483.6" textLength="1451.8" clip-path="url(#terminal-4159003628-line-19)">&#160;&#160;&#160;&#160;rag/llm&#160;&#160;&#160;ollama&#160;qwen2.5:14b&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;cpu&#160;&#160;&#160;&#160;&#160;10.7&#160;GiB&#160;ram&#160;no&#160;VRAM&#160;headroom;&#160;largest&#160;tier&#160;fitting&#160;24.5&#160;GiB&#160;spare&#160;RAM</text><text class="terminal-4159003628-r2" x="1878.8" y="483.6" textLength="12.2" clip-path="url(#terminal-4159003628-line-19)">
+</text><text class="terminal-4159003628-r2" x="0" y="508" textLength="1573.8" clip-path="url(#terminal-4159003628-line-20)">&#160;&#160;&#160;&#160;tts&#160;&#160;&#160;&#160;&#160;&#160;&#160;piper&#160;en_US-lessac-medium&#160;&#160;cpu&#160;&#160;&#160;&#160;&#160;0.4&#160;GiB&#160;ram&#160;&#160;auto:&#160;no&#160;NVIDIA&#160;GPU&#160;with&#160;4.4&#160;GiB&#160;free&#160;—&#160;piper&#160;(onnx),&#160;no&#160;GPU&#160;needed</text><text class="terminal-4159003628-r2" x="1878.8" y="508" textLength="12.2" clip-path="url(#terminal-4159003628-line-20)">
+</text><text class="terminal-4159003628-r2" x="0" y="532.4" textLength="1610.4" clip-path="url(#terminal-4159003628-line-21)">&#160;&#160;&#160;&#160;mov&#160;&#160;&#160;&#160;&#160;&#160;&#160;EMAGE&#160;audio&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;off&#160;&#160;&#160;&#160;&#160;-&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;no&#160;GPU;&#160;CPU&#160;inference&#160;is&#160;slower&#160;than&#160;realtime&#160;(--force-gesture&#160;to&#160;try)</text><text class="terminal-4159003628-r2" x="1878.8" y="532.4" textLength="12.2" clip-path="url(#terminal-4159003628-line-21)">
+</text><text class="terminal-4159003628-r2" x="0" y="556.8" textLength="1220" clip-path="url(#terminal-4159003628-line-22)">&#160;&#160;&#160;&#160;emo&#160;&#160;&#160;&#160;&#160;&#160;&#160;hubert-large-superb-er&#160;&#160;&#160;&#160;&#160;cpu&#160;&#160;&#160;&#160;&#160;1.6&#160;GiB&#160;ram&#160;&#160;hubert-large,&#160;~1.6&#160;GiB&#160;RAM&#160;per&#160;session</text><text class="terminal-4159003628-r2" x="1878.8" y="556.8" textLength="12.2" clip-path="url(#terminal-4159003628-line-22)">
+</text><text class="terminal-4159003628-r2" x="0" y="581.2" textLength="1146.8" clip-path="url(#terminal-4159003628-line-23)">&#160;&#160;&#160;&#160;embed&#160;&#160;&#160;&#160;&#160;ollama&#160;bge-m3&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;cpu&#160;&#160;&#160;&#160;&#160;-&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;OpenAI-compatible&#160;/v1/embeddings</text><text class="terminal-4159003628-r2" x="1878.8" y="581.2" textLength="12.2" clip-path="url(#terminal-4159003628-line-23)">
+</text><text class="terminal-4159003628-r2" x="0" y="605.6" textLength="963.8" clip-path="url(#terminal-4159003628-line-24)">&#160;&#160;&#160;&#160;memory&#160;&#160;&#160;&#160;qdrant&#160;v1.12.4&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;cpu&#160;&#160;&#160;&#160;&#160;-&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;standalone&#160;binary</text><text class="terminal-4159003628-r2" x="1878.8" y="605.6" textLength="12.2" clip-path="url(#terminal-4159003628-line-24)">
+</text><text class="terminal-4159003628-r2" x="1878.8" y="630" textLength="12.2" clip-path="url(#terminal-4159003628-line-25)">
+</text><text class="terminal-4159003628-r2" x="0" y="654.4" textLength="707.6" clip-path="url(#terminal-4159003628-line-26)">&#160;&#160;&#160;&#160;modules&#160;registered&#160;&#160;&#160;&#160;&#160;vad,stt,tag,qag,rag,emo,eag,tts</text><text class="terminal-4159003628-r2" x="1878.8" y="654.4" textLength="12.2" clip-path="url(#terminal-4159003628-line-26)">
+</text><text class="terminal-4159003628-r2" x="0" y="678.8" textLength="1171.2" clip-path="url(#terminal-4159003628-line-27)">&#160;&#160;&#160;&#160;client&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;huri-cli&#160;(git&#160;ref&#160;0.1.0&#160;of&#160;https://github.com/Lucy-Robotics/HuRI-CLI)</text><text class="terminal-4159003628-r2" x="1878.8" y="678.8" textLength="12.2" clip-path="url(#terminal-4159003628-line-27)">
+</text><text class="terminal-4159003628-r2" x="0" y="703.2" textLength="744.2" clip-path="url(#terminal-4159003628-line-28)">&#160;&#160;&#160;&#160;ram&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;16.3&#160;GiB&#160;needed&#160;/&#160;30.7&#160;GiB&#160;present</text><text class="terminal-4159003628-r2" x="1878.8" y="703.2" textLength="12.2" clip-path="url(#terminal-4159003628-line-28)">
+</text><text class="terminal-4159003628-r2" x="0" y="727.6" textLength="695.4" clip-path="url(#terminal-4159003628-line-29)">&#160;&#160;&#160;&#160;disk&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;8.1&#160;GiB&#160;needed&#160;/&#160;10.0&#160;GiB&#160;free</text><text class="terminal-4159003628-r2" x="1878.8" y="727.6" textLength="12.2" clip-path="url(#terminal-4159003628-line-29)">
+</text><text class="terminal-4159003628-r2" x="1878.8" y="752" textLength="12.2" clip-path="url(#terminal-4159003628-line-30)">
+</text><text class="terminal-4159003628-r4" x="0" y="776.4" textLength="756.4" clip-path="url(#terminal-4159003628-line-31)">&#160;&#160;&#160;&#160;VERDICT:&#160;voice&#160;pipeline&#160;—&#160;voice&#160;in,&#160;voice&#160;out,&#160;no&#160;gesture.</text><text class="terminal-4159003628-r2" x="1878.8" y="776.4" textLength="12.2" clip-path="url(#terminal-4159003628-line-31)">
+</text><text class="terminal-4159003628-r2" x="1878.8" y="800.8" textLength="12.2" clip-path="url(#terminal-4159003628-line-32)">
+</text><text class="terminal-4159003628-r2" x="0" y="825.2" textLength="976" clip-path="url(#terminal-4159003628-line-33)">&#160;&#160;&#160;&#160;plan&#160;written&#160;to&#160;.huri-local/plan.env&#160;—&#160;re-run&#160;without&#160;--plan-only&#160;to&#160;install</text><text class="terminal-4159003628-r2" x="1878.8" y="825.2" textLength="12.2" clip-path="url(#terminal-4159003628-line-33)">
+</text>
+    </g>
+    </g>
+</svg>
