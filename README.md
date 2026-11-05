@@ -511,7 +511,9 @@ make check    # both
 
 CI (`.github/workflows/ci.yml`) runs the lint and the link check, the tests
 on Python 3.10 to 3.12, the tests with only `huri-core[client]` installed (no
-Ray, no FastAPI), and a wheel build.
+Ray, no FastAPI), and a wheel build. What the static analysers reported on the
+four core repositories when the quality work started is in the
+[static analysis baseline](docs/quality/static-analysis-baseline-2026-10-31.md).
 
 Layout:
 
@@ -527,7 +529,8 @@ Layout:
   `huri.commands` entry points
 - `tests/core/` — everything above, with toy modules and events only
 - `docs/` — [ARCHITECTURE.md](docs/ARCHITECTURE.md) (how the HuRI repositories
-  fit) and the beta test plan ([btp.md](docs/btp.md), [btp.pdf](docs/btp.pdf))
+  fit), the beta test plan ([btp.md](docs/btp.md), [btp.pdf](docs/btp.pdf))
+  and `quality/` (the static analysis reports)
 - `scripts/check_links.py` — the link checker of README.md, CONTRIBUTING.md,
   RELEASING.md and docs/ (`--siblings DIR` also resolves deep links into
   checkouts of the other repositories, `--external` fetches web links);
