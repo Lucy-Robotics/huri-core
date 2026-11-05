@@ -242,9 +242,11 @@ installer (not the images) also installs `huri-cli` from `HURI_CLI_REF`, or
 | huri-modules | huri-core | huri-cli (installed by huri-modules' installer) |
 |---|---|---|
 | 0.1.x | 0.4.x | 0.1.x |
+| 0.2.x | 0.4.x | 0.1.x, from 0.1.1 |
 
 `huri-cli` 0.1.x needs `huri-core` 0.4.x and `huri-events` 0.1.x (from
-`huri-modules` 0.1.x): see huri-cli's
+`huri-modules` 0.1.x); from 0.1.1 it also takes `huri-events` 0.2.x (from
+`huri-modules` 0.2.x): see huri-cli's
 [Versions and compatibility](https://github.com/Lucy-Robotics/HuRI-CLI#versions-and-compatibility).
 
 A change to the core reaches the modules in four steps, none of them silent:

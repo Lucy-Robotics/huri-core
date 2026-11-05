@@ -581,6 +581,7 @@ release:
 | huri-modules | huri-core | huri-cli (installed by huri-modules' installer) |
 | ------------ | --------- | ----------------------------------------------- |
 | 0.1.x        | 0.4.x     | 0.1.x                                           |
+| 0.2.x        | 0.4.x     | 0.1.x, from 0.1.1                               |
 
 huri-modules' CI also runs against huri-core's `dev`, so a breaking change here
 is seen there before it is released.
