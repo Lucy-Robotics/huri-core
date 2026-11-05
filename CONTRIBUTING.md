@@ -6,9 +6,9 @@ change, and open the issue or pull request there.
 
 | You want to… | Repository | How |
 |---|---|---|
-| Add a module (a new capability) | your own, created from [huri-plugin-template](https://github.com/Lucy-Robotics/huri-plugin-template) | nobody's permission needed: publish it, tag it `huri-module` to be found by `huri hub search`; for the verified mark, open a pull request to [huri-modules](https://github.com/Lucy-Robotics/huri-modules) adding it to `registry.toml` and pinning it as a submodule under `modules/<name>` ([ACCEPTANCE.md](https://github.com/Lucy-Robotics/huri-modules/blob/main/ACCEPTANCE.md)) |
+| Add your own module (a new capability) | your own, created from [huri-plugin-template](https://github.com/Lucy-Robotics/huri-plugin-template) | nobody's permission needed (huri-core and the template are GPL-3.0, so a module you distribute is GPL-3.0 too): publish it, tag it `huri-module` to be found by `huri hub search`; for the verified mark, open a pull request to [huri-modules](https://github.com/Lucy-Robotics/huri-modules) adding it to `registry.toml` and pinning it as a submodule under `modules/<name>` ([ACCEPTANCE.md](https://github.com/Lucy-Robotics/huri-modules/blob/main/ACCEPTANCE.md)) |
 | Add an event type | an events package of your own, in your own topic namespace (`acme.*`) | see the template's `events/`; `huri.*` is reserved for [huri-events](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-events) |
-| Fix or improve a curated module, or `huri-events` | [huri-modules](https://github.com/Lucy-Robotics/huri-modules) ([issues](https://github.com/Lucy-Robotics/huri-modules/issues)) | pull request on `dev` to that package under `packages/`, with tests (`huri_core.testing`); bump the package's version |
+| Add, fix or improve a curated (official) module, or `huri-events` | [huri-modules](https://github.com/Lucy-Robotics/huri-modules) ([issues](https://github.com/Lucy-Robotics/huri-modules/issues)) | pull request on `dev` to that package under `packages/` (a new module: first an issue labelled `discussion`, as the maintainers decide which modules join the curated set; then `packages/huri-module-<name>` and its `registry.toml` entry), with tests (`huri_core.testing`); bump the package's version |
 | Change the hub (`huri hub`), the registry's format or its checker | [huri-modules](https://github.com/Lucy-Robotics/huri-modules) ([issues](https://github.com/Lucy-Robotics/huri-modules/issues)) | pull request on `dev` to `packages/huri-hub` (the registry parser lives there; `check_registry.py` reuses it), with tests; bump the package's version |
 | Change install or deployment | [huri-modules](https://github.com/Lucy-Robotics/huri-modules) | pull request on `dev`; CI plans the installer on three distros (`ci.yml`); a change to `deploy/` or `packages/` also builds the base image and runs a session against it (`docker.yml`); the GPU images and a real install run on demand (`docker.yml`'s `gpu_images`, `install.yml`) |
 | Change the framework (bus, server, SDK, loader, the `huri` command dispatcher) | [huri-core](https://github.com/Lucy-Robotics/huri-core) ([issues](https://github.com/Lucy-Robotics/huri-core/issues)) | pull request on `dev`; mind the public surface and semver ([RELEASING.md](RELEASING.md)) |
@@ -18,11 +18,14 @@ change, and open the issue or pull request there.
 | Fix or improve a use case (InMoov, the acceptance test site, ...) | its own repository, e.g. [HuRI-InMoov](https://github.com/Lucy-Robotics/HuRI-InMoov) | that repository's own process |
 
 The pages of huri-core (README.md, CONTRIBUTING.md, RELEASING.md, docs/)
-link into `huri-modules` and `huri-cli` at `main`. `python
+link into `huri-modules` and `HuRI-CLI` at `main`. `python
 scripts/check_links.py` checks every relative link and anchor, and that each
 `Lucy-Robotics` URL names a known repository; with `--siblings DIR` it also
 resolves each deep link (`tree/<ref>/<path>`, `#anchor`, `#subdirectory=`)
 against checkouts in `DIR/<repo>`.
+
+A security or safety flaw is not an issue: report it in private, as
+[SECURITY.md](SECURITY.md) says.
 
 Not sure where something belongs? Open an issue on
 [huri-core](https://github.com/Lucy-Robotics/huri-core/issues) and it will be
@@ -59,7 +62,8 @@ and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#versions-and-how-a-core-change-p
    nobody else starts the same work, or open one and say what you plan. Issues
    labelled `good first issue` are small and self-contained.
 2. **Branch from `dev`.** Team members branch in the repository, named
-   `<initials>/#<issue>/<short-name>` (`mvr/#58/fix-install`). Anyone else
+   `<initials>/#<issue>/<short-name>` (`mvr/#58/fix-install`), or
+   `<initials>/<short-name>` when there is no issue. Anyone else
    forks the repository and branches in the fork; the name is free.
 3. **Commit** with the [format below](#commit-messages).
 4. **Run the checks locally**: `make check` in huri-core and huri-modules;
@@ -147,4 +151,3 @@ issue or pull request.
 | `needs triage` | new, not yet looked at by a maintainer |
 | `blocked` | waits on another issue or a decision |
 | `duplicate`, `wontfix` | closed without a change, with the reason in a comment |
-| `refacto` | part of the plugin-architecture refactor ([#93](https://github.com/Lucy-Robotics/huri-core/issues/93)) |
