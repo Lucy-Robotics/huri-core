@@ -137,6 +137,11 @@ uses.
 
 ## Install
 
+[docs/INSTALL.md](docs/INSTALL.md) covers the whole install of HuRI: the
+prerequisites, the steps for the pipeline, a module or a client, the
+configuration files, every environment variable and how to check that it
+works. This section is about huri-core alone.
+
 huri-core is released on [PyPI](https://pypi.org/project/huri-core/) and as
 git tags (`X.Y.Z`), both from the same commit. Python 3.10 to 3.12.
 
