@@ -22,7 +22,7 @@ Anyone can propose these, by an issue or directly by a pull request, following
 
 | What | How | Why it is open |
 |---|---|---|
-| A new module | your own repository, from [huri-plugin-template](https://github.com/Lucy-Robotics/huri-plugin-template). Nobody's permission is needed to publish it and use it | HuRI is meant to be extended by others; a module runs only where an operator enables it |
+| A module of your own | your own repository, from [huri-plugin-template](https://github.com/Lucy-Robotics/huri-plugin-template). Nobody's permission is needed to publish it and use it. huri-core and the template are GPL-3.0, so a module you distribute is GPL-3.0 too | HuRI is meant to be extended by others; a module runs only where an operator enables it |
 | New event types | your own events package, in your own topic namespace (`acme.*`) | a namespace of your own cannot break anyone else's |
 | Fixes and improvements to the curated modules, the hub, the installer, the Docker images and the Helm chart | pull request to huri-modules | they are tested in CI and versioned per package, so a change is checked and visible |
 | Fixes and improvements to the framework that keep its public surface | pull request to huri-core | the tests and the semver rules protect the users |
@@ -41,6 +41,7 @@ The maintainers decide, and a pull request on them waits for that decision.
 | huri-core's public surface (base classes, client SDK, session schema, wire protocol, entry point groups, manifest; listed in [RELEASING.md](../RELEASING.md)) and when it breaks | modules, event packages and clients pin a huri-core range. A break must be deliberate, announced and released as a minor version |
 | The `huri.*` topics and the wire formats of huri-events | every curated module and every client speaks them, robots included. A change there breaks deployed clients |
 | The safety defaults: modules are denied unless the server lists them, actuation needs the operator's second consent (`HURI_ACTUATION_MODULES`), manifests and version ranges are checked at startup | HuRI can drive hardware near people. Weakening a safety check is never a side effect of another change |
+| Which modules join the curated (official) set, as packages under huri-modules' `packages/` | the team releases, tests and maintains the curated set, and installs it everywhere: each module there is a long-term cost to the team |
 | The verified mark: who gets it and the criteria in ACCEPTANCE.md | it tells users that the team reviewed a module. Its value depends on the team granting it |
 | Releases: version numbers, tags, what goes to `main`, PyPI | a release is a promise to the users about what works with what |
 | The pinned versions: `versions.env`, `constraints.txt`, the default models | they decide what installs and runs together; the installer and CI are tested against them |
