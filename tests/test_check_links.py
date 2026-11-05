@@ -52,7 +52,7 @@ def test_known_repositories_pass(tmp_path):
         "[core](https://github.com/Lucy-Robotics/huri-core)\n"
         "[stt](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/x)\n"
         "[tpl](https://github.com/Lucy-Robotics/huri-plugin-template#readme)\n"
-        "[robot](https://github.com/Lucy-Robotics/HuRI-InMoov)\n"
+        "[robot](https://github.com/Lucy-Robotics/HuRI-Lucy)\n"
         "[cli](https://github.com/Lucy-Robotics/HuRI-CLI/issues)\n"
         "[demo](https://github.com/Lucy-Robotics/HuRI_website_demo)\n"
         "[atp](https://github.com/lucy-robotics/huri_atp_testsite)\n"

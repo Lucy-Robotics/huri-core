@@ -41,7 +41,10 @@ REPOS = {
     "huri-plugin-template",
     # Use cases: clients built on HuRI, each in its own repository.
     "HuRI-CLI",
-    "HuRI-InMoov",
+    "HuRI-Lucy",
+    "huri-playground",
+    "huri-module-think",
+    "huri-module-lips-sync",
     "HuRI_ATP_testsite",
     "HuRI_website_demo",
 }

@@ -49,9 +49,9 @@ the server checks, per session, that every one of them is produced.
 | [huri-modules](https://github.com/Lucy-Robotics/huri-modules) | `packages/huri-events`, the curated `packages/huri-module-*`, `registry.toml` with its checker and `packages/huri-hub` (`huri hub`), `modules/<name>` submodules for verified third-party modules, install and deploy (whose installer also installs `huri-cli`) | `huri-core`, at `HURI_CORE_REF` in its `versions.env` file |
 | [huri-plugin-template](https://github.com/Lucy-Robotics/huri-plugin-template) | a starter module package, with its tests and CI | `huri-core` + `huri-events` |
 | [HuRI-CLI](https://github.com/Lucy-Robotics/HuRI-CLI) | a use case: the reference command-line client, its example client configs (with their `cli:` device section), and `huri-meta/`, the source of the `huri` convenience metapackage | `huri-core[client]` + `huri-events`, by version range |
-| [HuRI-InMoov](https://github.com/Lucy-Robotics/HuRI-InMoov) | a use case: HuRI driving an InMoov robot — an actuation module (`inmoov`), its event package and the robot-side client | `huri-core[server]` / `huri-core[client]` + `huri-events` |
+| [HuRI-Lucy](https://github.com/Lucy-Robotics/HuRI-Lucy) | a use case: HuRI driving an InMoov robot — an actuation module (`inmoov`), its event package and the robot-side client | `huri-core[server]` / `huri-core[client]` + `huri-events` |
 
-Use cases — huri-cli, HuRI-InMoov,
+Use cases — huri-cli, HuRI-Lucy,
 [HuRI_ATP_testsite](https://github.com/Lucy-Robotics/HuRI_ATP_testsite) and
 HuRI_website_demo (a private repository) — are not part of HuRI: each lives in
 its own repository, with its own versions and CI, and should use HuRI only through

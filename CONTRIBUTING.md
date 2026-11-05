@@ -15,7 +15,7 @@ change, and open the issue or pull request there.
 | Fix or improve the reference client (`huri-cli`), its example configs or the `huri` metapackage | [HuRI-CLI](https://github.com/Lucy-Robotics/HuRI-CLI) ([issues](https://github.com/Lucy-Robotics/HuRI-CLI/issues)) | pull request on `dev`, with tests; CI runs pytest and lint on Python 3.10–3.12 against `huri-core` and `huri-modules` `dev` |
 | Improve the module starter | [huri-plugin-template](https://github.com/Lucy-Robotics/huri-plugin-template) | pull request on `main` |
 | Improve the HuRI-wide pages (the README's ecosystem section, this file, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)) | [huri-core](https://github.com/Lucy-Robotics/huri-core) | pull request on `dev`; CI runs `python scripts/check_links.py` |
-| Fix or improve a use case (InMoov, the acceptance test site, ...) | its own repository, e.g. [HuRI-InMoov](https://github.com/Lucy-Robotics/HuRI-InMoov) | that repository's own process |
+| Fix or improve a use case (InMoov, the acceptance test site, ...) | its own repository, e.g. [HuRI-Lucy](https://github.com/Lucy-Robotics/HuRI-Lucy) | that repository's own process |
 
 The pages of huri-core (README.md, CONTRIBUTING.md, RELEASING.md, docs/)
 link into `huri-modules` and `huri-cli` at `main`. `python
