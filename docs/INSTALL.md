@@ -337,3 +337,6 @@ When something fails, see
 [Troubleshooting](https://github.com/Lucy-Robotics/huri-modules#troubleshooting)
 for the pipeline, and open an issue (see [CONTRIBUTING.md](../CONTRIBUTING.md))
 with the command, its output and `.huri-local/install.log`.
+
+Whether someone outside the team can follow this page on a clean machine is
+tested regularly: [the protocol and the reports](reproducibility/README.md).
