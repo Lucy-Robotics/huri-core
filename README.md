@@ -1,5 +1,7 @@
 # huri-core
 
+[![CI](https://github.com/Lucy-Robotics/huri-core/actions/workflows/ci.yml/badge.svg)](https://github.com/Lucy-Robotics/huri-core/actions/workflows/ci.yml)
+
 The framework of **HuRI**, a realtime, modular conversational pipeline for
 robots and avatars: speech in, an answer out as text, a voice and gestures. A
 multi-client server runs, per client session, a pipeline of modules (voice
