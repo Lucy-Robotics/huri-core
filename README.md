@@ -102,7 +102,7 @@ shows a module, a server and a client in about 60 lines.
 | **Deploy**: run a chosen set of modules somewhere | [huri-modules](https://github.com/Lucy-Robotics/huri-modules): `install.sh` (bare metal), [deploy/](https://github.com/Lucy-Robotics/huri-modules/tree/main/deploy) (Docker) or [helm/](https://github.com/Lucy-Robotics/huri-modules/tree/main/helm) (Kubernetes) | that repository only |
 | **Build a module**: write or change one module, alone | [huri-plugin-template](https://github.com/Lucy-Robotics/huri-plugin-template) ("Use this template") | `huri-core` + `huri-events`; no GPU, no running pipeline |
 | **Write a client**: a website, a robot, a CLI | the [client SDK](#client-sdk) and [huri-events](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-events); [HuRI-CLI](https://github.com/Lucy-Robotics/HuRI-CLI) is the reference example to start from | `huri-core[client]` + `huri-events`; your client is its own repository, with its own versions |
-| **Understand or change the framework**: bus, server, plugins, checks | this README, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md) | nothing |
+| **Understand or change the framework**: bus, server, plugins, checks | this README, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), [docs/GOVERNANCE.md](docs/GOVERNANCE.md) (who decides what) | nothing |
 
 ### The repositories
 

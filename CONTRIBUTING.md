@@ -31,6 +31,9 @@ Not sure where something belongs? Open an issue on
 [huri-core](https://github.com/Lucy-Robotics/huri-core/issues) and it will be
 moved.
 
+What anyone can propose, what the maintainers decide, and why:
+[docs/GOVERNANCE.md](docs/GOVERNANCE.md).
+
 In `huri-core` and `huri-modules`, run `make check` locally first. CI runs the
 same lint (black, isort, flake8, mypy) and pytest as separate steps, not
 `make check` itself; in `huri-modules`, mypy gates only the files that are
