@@ -88,7 +88,8 @@ jobs:
           cache: pip
       - name: install huri-core with every extra
         run: pip install -c constraints.txt -e ".[server,client,dev]"
-      - run: pytest -q
+      - name: pytest, with branch coverage (fails under the floor of docs/TESTING.md)
+        run: pytest -q --cov=huri_core --cov-branch --cov-report=term-missing:skip-covered --cov-fail-under=80
 
   client:
     name: client extra without the server stack

@@ -101,7 +101,9 @@ and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#versions-and-how-a-core-change-p
 - **Tests** with pytest. A fix comes with a test that fails without it; a new
   feature comes with tests for it. A module is tested with
   `huri_core.testing` (no Ray, no GPU), and the tests must not reach the
-  network or need a model download.
+  network or need a model download. [docs/TESTING.md](docs/TESTING.md) has
+  the critical path, the levels, the coverage targets and the rest of the
+  rules.
 - **Docs** change in the same pull request as the behaviour they describe;
   `python scripts/check_links.py` keeps the links valid.
 - **Versions**: bump the version of each package you change in huri-modules,
