@@ -94,9 +94,12 @@ tested set built against one huri-core ref, `HURI_CORE_REF` in its
 | huri-modules | huri-core |
 | ------------ | --------- |
 | 0.1.x        | 0.4.x     |
+| 0.2.x        | 0.4.x     |
 
-huri-modules 0.1.x is built against huri-core `0.4.0` (`HURI_CORE_REF=0.4.0`)
-and its packages pin `huri-core>=0.4,<0.5`.
+huri-modules 0.1.x and 0.2.x are built against huri-core 0.4.x
+(`HURI_CORE_REF=0.4.0`) and their packages pin `huri-core>=0.4,<0.5`;
+huri-modules 0.2.0 is a minor of its own, for `huri-events` 0.2 (see its
+RELEASING.md).
 
 ### How a breaking change propagates
 
@@ -111,9 +114,9 @@ and its packages pin `huri-core>=0.4,<0.5`.
    their range (`huri-core>=0.5,<0.6`, bumping each package's own version),
    points `HURI_CORE_REF` at `0.5.0`, and adds a row to the compatibility
    table.
-4. huri-modules releases a new minor (`0.2.0`), the set that works with
+4. huri-modules releases a new minor (`0.3.0`), the set that works with
    huri-core `0.5.x`. Users of huri-core `0.4.x` keep using huri-modules
-   `0.1.x` (`HURI_MODULES_REF=0.1.0` for `huri hub`), whose ranges keep pip
+   `0.2.x` (`HURI_MODULES_REF=0.2.0` for `huri hub`), whose ranges keep pip
    from pairing it with the wrong core.
 
 Clients built on the SDK are not part of that set.
