@@ -7,7 +7,7 @@ The version lives in one place: `__version__` in `huri_core/__init__.py`.
 distribution and `huri_core.__version__` always agree.
 
 Between releases `dev` carries the next version with a `.devN` suffix
-(`0.4.0.dev0`). Git tags are not used to compute the version: releases are
+(`0.5.0.dev0` after `0.4.0`). Git tags are not used to compute the version: releases are
 tagged on `main`'s merge commit, which `dev` never contains, so a tag-derived
 version would be wrong on `dev`.
 
@@ -16,8 +16,8 @@ version would be wrong on `dev`.
 `huri-core` follows semver. While the major version is `0`, a **minor** bump
 (`0.3` → `0.4`) may break the public surface and a **patch** bump must not.
 Third-party modules and event packages therefore pin `huri-core>=0.X,<0.(X+1)`.
-Before `0.X.0` is tagged, the lower bound is `0.X.0.dev0` (`>=0.4.0.dev0,<0.5`
-today): a `.devN` build is a pre-release below `0.X`, which `>=0.X` excludes.
+Before `0.X.0` is tagged, the lower bound is `0.X.0.dev0` (e.g.
+`>=0.5.0.dev0,<0.6`): a `.devN` build is a pre-release below `0.X`, which `>=0.X` excludes.
 
 Public surface, i.e. what a breaking change is measured against:
 
@@ -94,9 +94,12 @@ tested set built against one huri-core ref, `HURI_CORE_REF` in its
 | huri-modules | huri-core |
 | ------------ | --------- |
 | 0.1.x        | 0.4.x     |
+| 0.2.x        | 0.4.x     |
 
-Once `0.4.0` is tagged here, huri-modules moves `HURI_CORE_REF` from `dev` to
-`0.4.0` and its packages' range from `>=0.4.0.dev0,<0.5` to `>=0.4,<0.5`.
+huri-modules 0.1.x and 0.2.x are built against huri-core 0.4.x
+(`HURI_CORE_REF=0.4.0`) and their packages pin `huri-core>=0.4,<0.5`;
+huri-modules 0.2.0 is a minor of its own, for `huri-events` 0.2 (see its
+RELEASING.md).
 
 ### How a breaking change propagates
 
@@ -111,13 +114,13 @@ Once `0.4.0` is tagged here, huri-modules moves `HURI_CORE_REF` from `dev` to
    their range (`huri-core>=0.5,<0.6`, bumping each package's own version),
    points `HURI_CORE_REF` at `0.5.0`, and adds a row to the compatibility
    table.
-4. huri-modules releases a new minor (`0.2.0`), the set that works with
+4. huri-modules releases a new minor (`0.3.0`), the set that works with
    huri-core `0.5.x`. Users of huri-core `0.4.x` keep using huri-modules
-   `0.1.x` (`HURI_MODULES_REF=0.1.0` for `huri hub`), whose ranges keep pip
+   `0.2.x` (`HURI_MODULES_REF=0.2.0` for `huri hub`), whose ranges keep pip
    from pairing it with the wrong core.
 
 Clients built on the SDK are not part of that set.
-[huri-cli](https://github.com/Lucy-Robotics/huri-cli), the reference client,
+[HuRI-CLI](https://github.com/Lucy-Robotics/HuRI-CLI), the reference client,
 has its own versions and tags; its CI runs against huri-core at its
 `HURI_CORE_REF` (default `dev`), and it moves its `huri-core[client]` range
 the same way once huri-core is tagged. huri-modules' installer pins the
