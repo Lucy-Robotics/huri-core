@@ -1,4 +1,5 @@
 import json
+import logging
 import struct
 import uuid
 from typing import Any, Dict, Iterable, List, Type
@@ -16,6 +17,8 @@ from huri_core.core.sender import Sender
 from .app import app
 from .dataclasses.config import ClientConfig
 from .session import Session
+
+logger = logging.getLogger("ray.serve")
 
 
 @serve.deployment
@@ -153,7 +156,7 @@ class HuRI:
             )
             await ws.close(code=1008, reason="invalid session config")
             user = client_config_raw.get("user_id", "<no user_id>")
-            print(f"[HuRI] rejected session for {user}: {e}")
+            logger.warning("[HuRI] rejected session for %s: %s", user, e)
             return
 
         senders: List[Module] = [Sender(ws, topic) for topic in topic_list]
@@ -163,8 +166,11 @@ class HuRI:
 
         session_id = str(uuid.uuid4())
         self.clients[session_id] = Session(modules)
-        print(f"Client registered with _user_id={client_config.user_id}, \
-config: {client_config}")
+        logger.info(
+            "Client registered with _user_id=%s, config: %s",
+            client_config.user_id,
+            client_config,
+        )
 
         async def receive_loop(session: Session, ws: WebSocket):
             try:
@@ -189,21 +195,24 @@ config: {client_config}")
                     try:
                         event_data = self.event_factory.create(topic, data)
                     except RuntimeError as e:
-                        print(
-                            f"[HuRI] client {client_config.user_id}: dropping frame "
-                            f"on topic {topic!r}: {e}. Known inbound topics: "
-                            f"{self.event_factory.topics()}"
+                        logger.warning(
+                            "[HuRI] client %s: dropping frame on topic %r: %s. "
+                            "Known inbound topics: %s",
+                            client_config.user_id,
+                            topic,
+                            e,
+                            self.event_factory.topics(),
                         )
                         continue
 
                     await session.publish(topic, event_data)
 
-            except RuntimeError as e:
-                print(f"[ERROR] Client {client_config.user_id}:", e)
+            except RuntimeError:
+                logger.exception("[ERROR] Client %s", client_config.user_id)
             except WebSocketDisconnect:
                 pass
             finally:
-                print(f"Client {client_config.user_id} disconnected")
+                logger.info("Client %s disconnected", client_config.user_id)
 
         try:
             await receive_loop(self.clients[session_id], ws)
@@ -216,10 +225,7 @@ config: {client_config}")
                 try:
                     await fin()
                 except Exception:
-                    import traceback
-
-                    print(
-                        f"[HuRI] finalize failed for {type(module).__name__}:\n"
-                        f"{traceback.format_exc()}"
+                    logger.exception(
+                        "[HuRI] finalize failed for %s", type(module).__name__
                     )
             self.clients.pop(session_id, None)
