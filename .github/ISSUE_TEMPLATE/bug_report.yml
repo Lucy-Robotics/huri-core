@@ -1,0 +1,47 @@
+name: Bug report
+description: Something does not work as documented
+labels: ["bug", "needs triage"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran and what it printed. Paste errors as text.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. git clone ... && cd ...
+        2. ./install.sh --plan-only
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions
+      description: "`pip show huri-core huri-events huri-cli | grep -E '^(Name|Version)'`, and the commit of your checkout (`git rev-parse --short HEAD`)."
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Machine
+      description: OS and version, Python version, GPU (or none), RAM.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: For an install problem, the end of `.huri-local/install.log`.
+      render: text

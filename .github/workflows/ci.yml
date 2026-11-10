@@ -7,7 +7,7 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    branches: ["**"]
   pull_request:
   workflow_dispatch:
 
@@ -43,7 +43,7 @@ jobs:
   deep-links:
     name: deep links into the other repositories (non-blocking)
     # README and docs/ link into huri-modules (packages/, deploy/, helm/),
-    # huri-cli and huri-plugin-template at `main`: resolve each such path and
+    # HuRI-CLI and huri-plugin-template at `main`: resolve each such path and
     # anchor against a shallow checkout of their `main`, laid out as
     # ./<repo>. Non-blocking: a rename there must not fail this repository's
     # CI, but it shows up here.
@@ -60,9 +60,9 @@ jobs:
           path: huri-modules
       - uses: actions/checkout@v4
         with:
-          repository: Lucy-Robotics/huri-cli
+          repository: Lucy-Robotics/HuRI-CLI
           ref: main
-          path: huri-cli
+          path: HuRI-CLI
       - uses: actions/checkout@v4
         with:
           repository: Lucy-Robotics/huri-plugin-template
@@ -88,7 +88,8 @@ jobs:
           cache: pip
       - name: install huri-core with every extra
         run: pip install -c constraints.txt -e ".[server,client,dev]"
-      - run: pytest -q
+      - name: pytest, with branch coverage (fails under the floor of docs/TESTING.md)
+        run: pytest -q --cov=huri_core --cov-branch --cov-report=term-missing:skip-covered --cov-fail-under=80
 
   client:
     name: client extra without the server stack
