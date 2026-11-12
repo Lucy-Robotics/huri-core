@@ -11,8 +11,10 @@ frames, and binary frames `[u16 topic length][topic][payload]`). It knows
 nothing about audio, text or gestures: the use case registers the handlers.
 
 Handlers of one topic run one at a time, in arrival order (audio playback
-needs that); different topics run concurrently. A failing handler is logged
-and does not stop the others.
+needs that); different topics run concurrently. A handler registered with
+`concurrent=True` opts out: it starts on each event without waiting for its own
+earlier calls or for the topic's ordered handlers (close() cancels the calls
+still running). A failing handler is logged and does not stop the others.
 """
 
 import asyncio
@@ -20,7 +22,7 @@ import json
 import logging
 import struct
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (
     Any,
     Awaitable,
@@ -30,6 +32,7 @@ from typing import (
     List,
     Mapping,
     Optional,
+    Set,
     Type,
     TypeVar,
 )
@@ -59,8 +62,9 @@ class HuRISessionError(RuntimeError):
 @dataclass
 class _Subscription:
     event_cls: Type[EventData]
-    handlers: List[Handler]
     queue: "asyncio.Queue[Any]"
+    handlers: List[Handler] = field(default_factory=list)
+    concurrent: List[Handler] = field(default_factory=list)
 
 
 def load_raw_client_config(path: str) -> Dict[str, Any]:
@@ -133,6 +137,8 @@ class HuRIClient:
         self._subs: Dict[str, _Subscription] = {}
         self._ws: Optional[websockets.ClientConnection] = None
         self._tasks: List[asyncio.Task] = []
+        # Concurrent handler calls; each discards itself when done.
+        self._handler_tasks: Set[asyncio.Task] = set()
 
     @classmethod
     def from_config(cls, config: ClientConfig) -> "HuRIClient":
@@ -149,23 +155,35 @@ class HuRIClient:
     # --- configuration ----------------------------------------------------
 
     def on(
-        self, topic: str, event_cls: Type[E], handler: Callable[[E], Awaitable[None]]
+        self,
+        topic: str,
+        event_cls: Type[E],
+        handler: Callable[[E], Awaitable[None]],
+        *,
+        concurrent: bool = False,
     ) -> None:
         """Call `handler(event)` for every `topic` event. Before connecting:
-        the subscriptions are part of the session handshake."""
+        the subscriptions are part of the session handshake.
+
+        By default a topic's handlers run one at a time, in arrival order.
+        `concurrent=True` opts this handler out of waiting: it starts on each
+        event without waiting for its own earlier calls or for the topic's
+        ordered handlers, and close() cancels the calls still running. On a
+        topic that also has ordered handlers it sees each event when they have
+        finished the previous one. Use it for order-free work (logging, metrics).
+        """
 
         if self._ws is not None:
             raise RuntimeError("subscribe with on() before connecting")
         sub = self._subs.get(topic)
         if sub is None:
-            self._subs[topic] = _Subscription(event_cls, [handler], asyncio.Queue())
+            sub = self._subs[topic] = _Subscription(event_cls, asyncio.Queue())
         elif sub.event_cls is not event_cls:
             raise ValueError(
                 f"{topic!r} is already subscribed as {sub.event_cls.__name__}, "
                 f"not {event_cls.__name__}"
             )
-        else:
-            sub.handlers.append(handler)
+        (sub.concurrent if concurrent else sub.handlers).append(handler)
 
     def handshake(self) -> Dict[str, Any]:
         """The session request sent to the server."""
@@ -209,10 +227,12 @@ class HuRIClient:
         return self
 
     async def close(self) -> None:
-        for task in self._tasks:
+        tasks = [*self._tasks, *self._handler_tasks]
+        for task in tasks:
             task.cancel()
-        await asyncio.gather(*self._tasks, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks = []
+        self._handler_tasks.clear()
         if self._ws is not None:
             await self._ws.close()
             self._ws = None
@@ -262,8 +282,15 @@ class HuRIClient:
             except Exception:
                 logger.exception("cannot decode %r frame as %s", topic, sub.event_cls)
                 continue
+            for handler in sub.concurrent:
+                task = asyncio.create_task(self._call(topic, handler, event))
+                self._handler_tasks.add(task)
+                task.add_done_callback(self._handler_tasks.discard)
             for handler in sub.handlers:
-                try:
-                    await handler(event)
-                except Exception:
-                    logger.exception("handler for %r failed", topic)
+                await self._call(topic, handler, event)
+
+    async def _call(self, topic: str, handler: Handler, event: Any) -> None:
+        try:
+            await handler(event)
+        except Exception:
+            logger.exception("handler for %r failed", topic)

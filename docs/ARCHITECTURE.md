@@ -119,6 +119,13 @@ its own, which no other package may use. A replacement for a curated event
 topics are part of what it is: a module consuming `acme.motion` is a different
 module, wired instead of the old one.
 
+A package claims its namespace just by registering topics in it: no extra
+field, and no rule tying it to the package name. On one server, two installed
+packages using the same namespace is a startup error. In the `huri-modules`
+registry, the first merged entry owns the namespace (`namespace =` in
+`registry.toml`, checked by CI), and the maintainers settle any dispute. One
+package, one namespace: a vendor that needs two publishes two event packages.
+
 **Commands are plugins too.** `huri-core` installs the `huri` console script,
 which knows no command of its own: `huri <name> [args...]` runs the entry point
 `<name>` of the `"huri.commands"` group, and `huri --help` lists the installed
@@ -146,7 +153,16 @@ Failures say which module, which topic, and which package is probably missing.
 (`requires.actuation` in its manifest, or `actuation = True` on its class); the
 server will not start with it unless the operator also lists it in
 `HURI_ACTUATION_MODULES`. Enabling a module is not consenting to it moving a
-robot, and neither is a verified mark.
+robot, and neither is a verified mark. Every event such a module receives or
+emits is logged on the `huri.audit` logger (server log by default, routable separately).
+
+**Both allow-lists are per deployment.** Every session on a server can use
+every module that server enables, actuation modules included. Tenants that need
+different module sets run separate deployments. Per-client rules would need
+client authentication, which HuRI does not have (`user_id` is whatever the
+client claims). So anyone who can reach `/session` can drive every enabled
+actuation module: keep that endpoint on a private network or behind a proxy
+that authenticates.
 
 ## A session
 
@@ -155,8 +171,19 @@ and those it will `subscribe` to — and gets `session_init`, or `session_error`
 with the reason. Events then travel as JSON frames or binary frames
 `[u16 topic length][topic][payload]`. On the server, the event bus runs each
 module on its input topic and publishes what it emits; a `Sender` per
-subscribed topic forwards to the client. The SDK delivers each topic's events
-to its handlers in order.
+subscribed topic forwards to the client.
+
+The SDK handles each topic's events one at a time, in arrival order, and
+different topics in parallel: audio chunks play in order, and slow playback
+never holds up text. If a handler raises, the error is logged and the next
+event still runs. Each topic's queue is unbounded, so nothing is dropped, but a
+handler slower than its stream keeps adding latency; keeping up is the use
+case's job.
+`on(..., concurrent=True)` opts a handler out of waiting: it starts on each
+event without waiting for its own earlier calls or for the topic's ordered
+handlers, and `close()` cancels the calls still running. On a topic that also
+has ordered handlers it sees each event when the ordered ones have finished the
+previous one. Use it for order-free work like logging or metrics.
 
 Heavy models run as Ray Serve deployments (`ModuleWithHandle`); module code
 imports their libraries lazily, so the head node can import every module to

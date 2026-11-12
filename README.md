@@ -315,7 +315,9 @@ class, or `requires.actuation = true` in its manifest), and the server refuses
 to start with it enabled unless its operator also lists it in
 `HURI_ACTUATION_MODULES`: a second, explicit consent, independent of
 `HURI_MODULES` and of any verified mark. Active actuation modules are logged as
-a warning at startup.
+a warning at startup. Every event an opted-in actuation module receives or
+emits is logged on the `huri.audit` logger, which goes to the server log by
+default and can be routed separately.
 
 ### Manifests and the startup and session checks
 
@@ -367,7 +369,13 @@ so a client can build its handshake, or check it, before connecting.
 {
   "modules": ["shout"],
   "details": {
-    "shout": {"input": "echo.text", "output": "echo.loud", "actuation": false}
+    "shout": {
+      "input": "echo.text",
+      "output": "echo.loud",
+      "actuation": false,
+      "distribution": "huri-module-echo",
+      "version": "0.1.0"
+    }
   },
   "huri_core": "0.4.0"
 }
@@ -378,9 +386,11 @@ list a rejected session gets as `server_modules`; an installed but disabled
 module is not in it. `details` gives each module's input and output topics
 (`output` is `null` for a module that emits nothing) and whether it may drive
 hardware (`actuation`, as the startup checks found it, from the class or its
-manifest). `huri_core` is the server's huri-core version, as a PEP 440
-string: a dev build reports a pre-release such as `0.4.0.dev0`, so compare it
-with `packaging.version`, not as an exact string. The answer is fixed at
+manifest). `distribution` and `version` name the installed package providing
+the module (both `null` for a module enabled by import path). `huri_core` is
+the server's huri-core version, as a PEP 440 string: a dev build reports a
+pre-release such as `0.4.0.dev0`, so compare it with `packaging.version`, not
+as an exact string. The answer is fixed at
 startup: the route loads and instantiates nothing.
 
 `actuation` is informational. The only safety gate is the operator's opt-in
@@ -408,9 +418,16 @@ async with client:
 
 Handlers of one topic run one at a time, in arrival order (audio playback
 needs that); different topics run concurrently; a failing handler is logged
-and does not stop the others. A refused session raises `HuRISessionError`
-(with `server_modules`). The same session can be written as a YAML file
-(`huri_url`, `modules`, `send`, `subscribe`), loaded with
+and does not stop the others. `client.on(..., concurrent=True)` opts a
+handler out of waiting: it starts on each event without waiting for its own
+earlier calls or for the topic's ordered handlers, and `close()` cancels the
+calls still running. On a topic that also has ordered handlers it sees each
+event when the ordered ones have finished the previous one. Use it for
+order-free work like logging or metrics.
+
+A refused session raises `HuRISessionError` (with `server_modules`). The same
+session can be written as a YAML file (`huri_url`, `modules`, `send`,
+`subscribe`), loaded with
 `load_client_config(path)` and turned into a client with
 `HuRIClient.from_config(...)`; `load_client_config` also gives the session
 this machine's `user_id`, created once and kept in the user config directory.

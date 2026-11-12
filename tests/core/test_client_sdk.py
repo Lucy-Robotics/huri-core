@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 
 import pytest
@@ -148,6 +149,122 @@ def test_handlers_of_a_topic_run_in_order_and_survive_failures():
         return seen
 
     assert run(scenario()) == ["0", "1", "3", "4"]
+
+
+def _tokens():
+    return [encode("huri.token", Text(t)) for t in ("Hel", "lo", "!")]
+
+
+def test_a_handler_is_sequential_by_default():
+    async def scenario():
+        seen, state = [], {"active": 0, "max": 0}
+        gate = asyncio.Event()
+
+        async def handler(event: Text):
+            state["active"] += 1
+            state["max"] = max(state["max"], state["active"])
+            seen.append(event.text)
+            await gate.wait()
+            state["active"] -= 1
+
+        async with FakeHuRI(outgoing=_tokens()) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on("huri.token", Text, handler)
+            async with client:
+                await until(lambda: len(seen) == 1)
+                await asyncio.sleep(0.05)
+                assert seen == ["Hel"]
+                gate.set()
+                await until(lambda: len(seen) == 3)
+        return seen, state["max"]
+
+    assert run(scenario()) == (["Hel", "lo", "!"], 1)
+
+
+def test_a_concurrent_handler_handles_events_in_parallel():
+    async def scenario():
+        started = []
+        release = asyncio.Event()
+
+        async def handler(event: Text):
+            started.append(event.text)
+            await release.wait()
+
+        async with FakeHuRI(outgoing=_tokens()) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on("huri.token", Text, handler, concurrent=True)
+            async with client:
+                await asyncio.wait_for(until(lambda: len(started) == 3), 1)
+                release.set()
+        return started
+
+    assert run(scenario()) == ["Hel", "lo", "!"]
+
+
+def test_a_concurrent_handler_does_not_hold_up_an_ordered_handler_on_the_same_topic():
+    async def scenario():
+        ordered = []
+        never = asyncio.Event()
+
+        async def stuck(event: Text):
+            await never.wait()
+
+        async def collect(event: Text):
+            ordered.append(event.text)
+
+        async with FakeHuRI(outgoing=_tokens()) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on("huri.token", Text, stuck, concurrent=True)
+            client.on("huri.token", Text, collect)
+            async with client:
+                await asyncio.wait_for(until(lambda: len(ordered) == 3), 1)
+        return ordered
+
+    assert run(scenario()) == ["Hel", "lo", "!"]
+
+
+def test_a_failing_concurrent_handler_does_not_stop_the_others(caplog):
+    async def scenario():
+        seen = []
+
+        async def handler(event: Text):
+            if event.text == "lo":
+                raise RuntimeError("handler bug")
+            seen.append(event.text)
+
+        async with FakeHuRI(outgoing=_tokens()) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on("huri.token", Text, handler, concurrent=True)
+            with caplog.at_level(logging.ERROR, logger="huri.client"):
+                async with client:
+                    await until(lambda: len(seen) == 2)
+                    await until(lambda: bool(caplog.records))
+        return seen
+
+    assert set(run(scenario())) == {"Hel", "!"}
+    assert any("huri.token" in r.getMessage() for r in caplog.records)
+
+
+def test_closing_the_client_cancels_concurrent_handlers_still_running():
+    async def scenario():
+        tasks = []
+        never = asyncio.Event()
+
+        async def handler(event: Text):
+            tasks.append(asyncio.current_task())
+            await never.wait()
+
+        async with FakeHuRI(outgoing=_tokens()) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on("huri.token", Text, handler, concurrent=True)
+            await client.connect()
+            await until(lambda: len(tasks) == 3)
+            await asyncio.wait_for(client.close(), 1)
+            # Checked before asyncio.run() shutdown cancels leftovers itself.
+            assert len(tasks) == 3
+            assert all(t.cancelled() for t in tasks)
+
+    run(scenario())
 
 
 def test_subscribing_after_connecting_is_refused():

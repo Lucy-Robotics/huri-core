@@ -56,6 +56,20 @@ def test_module_is_found_through_its_entry_point(installed):
     assert plugins.installed_modules() == ["toy"]
 
 
+def test_module_distribution_names_the_package_or_none_for_an_import_path(installed):
+    installed[plugins.MODULES_GROUP] += [
+        FakeEntryPoint("toy", ToyModule, dist="pkg-a"),
+        FakeEntryPoint("loose", ToyModule),
+    ]
+    installed[plugins.MODULES_GROUP][0].dist.version = "1.2.3"
+    del installed[plugins.MODULES_GROUP][1].dist
+    assert plugins.module_distribution("toy") == ("pkg-a", "1.2.3")
+    assert plugins.module_distribution("loose") == (None, None)
+    assert plugins.module_distribution("my_pkg.echo:Echo") == (None, None)
+    assert plugins.module_label("toy", "pkg-a", "1.2.3") == "toy (pkg-a 1.2.3)"
+    assert plugins.module_label("x:Y", None, None) == "x:Y (no distribution)"
+
+
 def test_only_selected_modules_are_imported(installed):
     broken = FakeEntryPoint("heavy", ImportError("No module named 'torch'"))
     installed[plugins.MODULES_GROUP] += [FakeEntryPoint("toy", ToyModule), broken]

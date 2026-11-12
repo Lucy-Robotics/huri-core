@@ -1,7 +1,8 @@
 import json
+import logging
 import struct
 import uuid
-from typing import Any, Dict, Iterable, List, Type
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Type
 
 from fastapi import WebSocket, WebSocketDisconnect
 from ray import serve
@@ -10,7 +11,7 @@ from ray.serve import handle
 import huri_core
 from huri_core.core.compat import check_session
 from huri_core.core.factory import EventData, EventDataFactory, Module, ModuleFactory
-from huri_core.core.plugins import installed_modules
+from huri_core.core.plugins import installed_modules, module_label
 from huri_core.core.sender import Sender
 
 from .app import app
@@ -37,13 +38,30 @@ class HuRI:
         handles: Dict[str, handle.DeploymentHandle],
         events: Dict[str, Type[EventData]],
         actuating: Iterable[str],
+        distributions: Optional[Dict[str, Tuple[Optional[str], Optional[str]]]] = None,
     ) -> None:
         """:actuating: the enabled modules that may drive hardware, as the
         startup checks found them (class attribute or manifest, and opted in).
         Only reported by GET /modules: the checks already ran in build_app().
         Required, not defaulted: a binder that forgot it would report a servo
         as `actuation: false`. Informational only: the operator opt-in
-        (HURI_ACTUATION_MODULES) is the safety gate, never this flag."""
+        (HURI_ACTUATION_MODULES) is the safety gate, never this flag.
+
+        :distributions: (distribution, version) of each module by name, from
+        the loader; absent or (None, None) for an import-path module."""
+        dists = {n: (distributions or {}).get(n, (None, None)) for n in modules}
+        actuating = set(actuating)
+        # A Serve replica's root logger has no handler and level WARNING: unless
+        # the operator routed `huri.audit`, send it where ray.serve logs go.
+        audit = logging.getLogger("huri.audit")
+        if not audit.handlers:
+            # shortcut: handler objects are copied once, so they go stale if Serve
+            # reconfigures its logging after start (a logging_config update);
+            # re-copy then.
+            serve_logger = logging.getLogger("ray.serve")
+            for h in serve_logger.handlers:
+                audit.addHandler(h)
+            audit.setLevel(logging.INFO)
         self.module_factory = ModuleFactory(handles, installed=installed_modules())
         self.event_factory = EventDataFactory()
         for name, module_cls in modules.items():
@@ -58,9 +76,15 @@ class HuRI:
 
         self.clients: Dict[str, Session] = {}
 
+        # shortcut: labels are keyed by class, so a class enabled under two
+        # names (entry point + import path) gets one label; key by name if needed.
+        self.labels = {
+            cls: module_label(name, *dists[name]) for name, cls in modules.items()
+        }
+        self.audited = {cls for name, cls in modules.items() if name in actuating}
+
         # Fixed at startup: GET /modules only reads it, it never imports or
         # instantiates a module.
-        actuating = set(actuating)
         self.modules_info: Dict[str, Any] = {
             "modules": self.module_factory.registered(),
             "details": {
@@ -68,6 +92,8 @@ class HuRI:
                     "input": module_cls.input_type,
                     "output": module_cls.output_type,
                     "actuation": name in actuating,
+                    "distribution": dists[name][0],
+                    "version": dists[name][1],
                 }
                 for name, module_cls in sorted(modules.items())
             },
@@ -84,7 +110,9 @@ class HuRI:
                 "modules": ["stt", "vad"],
                 "details": {
                     "stt": {"input": "huri.voice", "output": "huri.transcript",
-                            "actuation": false},
+                            "actuation": false,
+                            "distribution": "huri-module-stt",
+                            "version": "0.3.1"},
                     ...
                 },
                 "huri_core": "0.4.0"
@@ -92,7 +120,9 @@ class HuRI:
 
         `output` is null for a module that emits nothing; `actuation` is true
         for a module that may drive hardware (opted in by its operator), for
-        information only. `huri_core` is the PEP 440 version string (a dev
+        information only. `distribution` and `version` name the installed
+        package providing the module, both null for an import-path module.
+        `huri_core` is the PEP 440 version string (a dev
         build reports e.g. "0.4.0.dev0").
         """
         return self.modules_info
@@ -162,7 +192,9 @@ class HuRI:
         await ws.send_json({"type": "session_init", "user_id": client_config.user_id})
 
         session_id = str(uuid.uuid4())
-        self.clients[session_id] = Session(modules)
+        self.clients[session_id] = Session(
+            modules, session_id, client_config.user_id, self.labels, self.audited
+        )
         print(f"Client registered with _user_id={client_config.user_id}, \
 config: {client_config}")
 

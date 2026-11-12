@@ -23,7 +23,7 @@ import importlib.util
 import re
 from importlib.metadata import EntryPoint, entry_points
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Type
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple, Type
 
 from .events import EventData
 from .manifest import MANIFEST_FILE, ModuleManifest, loads_manifest
@@ -45,6 +45,23 @@ class PluginError(RuntimeError):
 def _dist(ep: EntryPoint) -> str:
     dist = getattr(ep, "dist", None)
     return dist.name if dist is not None else "<unknown distribution>"
+
+
+def module_distribution(name: str) -> Tuple[Optional[str], Optional[str]]:
+    """(distribution, version) providing the `huri.modules` entry point `name`;
+    (None, None) for an import path or an entry point without distribution."""
+
+    ep = _entry_points(MODULES_GROUP).get(name)
+    dist = getattr(ep, "dist", None)
+    if dist is None:
+        return None, None
+    return dist.name, dist.version
+
+
+def module_label(name: str, dist: Optional[str], version: Optional[str]) -> str:
+    """How logs name a module: "stt (huri-module-stt 0.3.1)"."""
+
+    return f"{name} ({dist} {version})" if dist else f"{name} (no distribution)"
 
 
 def _normalize(dist: str) -> str:
