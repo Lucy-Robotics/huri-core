@@ -439,11 +439,15 @@ event when the ordered ones have finished the previous one. Use it for
 order-free work like logging or metrics.
 
 A refused session raises `HuRISessionError` (with `server_modules`).
-`HuRIClient(..., log={"modules": {"shout": "DEBUG"}})` sends the `log` levels
-in the handshake, and the client logs each event it sends and receives at
-`DEBUG` on the `huri.client` logger, filtered by the `topics` levels. The same
-session can be written as a YAML file (`huri_url`, `modules`, `send`,
-`subscribe`, `log`), loaded with
+`client.on_connection(handler)`, at any time, gets a `ConnectionMessage` when
+the session is `connected`, `refused` (`detail`, `server_modules`), fails with
+an `error` (`detail` names the exception, which `connect` still raises) or is
+`closed` (once, with the websocket `code` and the reason in `detail`; a dropped
+connection gives 1006). `HuRIClient(..., log={"modules": {"shout": "DEBUG"}})`
+sends the `log` levels in the handshake, and the client logs each event it
+sends and receives at `DEBUG` on the `huri.client` logger, filtered by the
+`topics` levels. The same session can be written as a YAML file (`huri_url`,
+`modules`, `send`, `subscribe`, `log`), loaded with
 `load_client_config(path)` and turned into a client with
 `HuRIClient.from_config(...)`; `load_client_config` also gives the session
 this machine's `user_id`, created once and kept in the user config directory.
