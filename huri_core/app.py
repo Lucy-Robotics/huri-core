@@ -8,6 +8,7 @@ from huri_core.core.factory import bind_deployment_handles
 from huri_core.core.huri import HuRI
 from huri_core.core.plugins import (
     find_manifest,
+    load_event_policy,
     load_events,
     load_modules,
     module_distribution,
@@ -63,9 +64,13 @@ def build_app() -> Application:
             "(opted in by HURI_ACTUATION_MODULES)",
             actuating,
         )
+    # Unknown or broken policy: refuse to start, before anything is deployed.
+    policy_name = os.environ.get("HURI_EVENT_POLICY") or "interrupt"
+    event_policy = load_event_policy(policy_name)
+    logger.info("[HuRI] event policy: %s (%s)", policy_name, event_policy.__name__)
     handles = bind_deployment_handles(modules)
     app: Application = HuRI.bind(  # type: ignore[attr-defined]
-        modules, handles, events, actuating, distributions
+        modules, handles, events, actuating, distributions, event_policy
     )
     return app
 

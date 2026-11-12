@@ -10,6 +10,7 @@ from huri_core.core.dataclasses.config import ModuleConfig
 from huri_core.core.events import JsonEvent
 from huri_core.core.factory import ModuleFactory
 from huri_core.core.module import Module
+from huri_core.core.policy import EventPolicy, InterruptPolicy
 
 
 class ToyModule(Module):
@@ -45,7 +46,11 @@ class FakeEntryPoint:
 def installed(monkeypatch):
     """Replace the installed entry points with a fake set."""
 
-    registry = {plugins.MODULES_GROUP: [], plugins.EVENTS_GROUP: []}
+    registry = {
+        plugins.MODULES_GROUP: [],
+        plugins.EVENTS_GROUP: [],
+        plugins.EVENT_POLICIES_GROUP: [],
+    }
     monkeypatch.setattr(plugins, "entry_points", lambda group: registry[group])
     return registry
 
@@ -273,3 +278,81 @@ def test_replacement_event_coexists_with_the_curated_one(installed):
         "huri.motion": ToyEvent,
         "acme.motion": OtherToyEvent,
     }
+
+
+class FifoPolicy(EventPolicy):
+    pass
+
+
+def test_unknown_policy_refuses_to_start(installed):
+    with pytest.raises(plugins.PluginError) as error:
+        plugins.load_event_policy("round-robbin")
+    message = str(error.value)
+    assert "round-robbin" in message
+    assert "concurrent" in message and "interrupt" in message
+
+
+def test_an_installed_event_policy_is_loaded_by_name(installed):
+    installed[plugins.EVENT_POLICIES_GROUP].append(FakeEntryPoint("fifo", FifoPolicy))
+    assert plugins.load_event_policy("fifo") is FifoPolicy
+    assert "fifo" in plugins.installed_event_policies()
+
+
+def test_an_installed_event_policy_is_listed_when_the_name_is_unknown(installed):
+    installed[plugins.EVENT_POLICIES_GROUP].append(FakeEntryPoint("fifo", FifoPolicy))
+    with pytest.raises(plugins.PluginError, match="fifo"):
+        plugins.load_event_policy("nope")
+
+
+def test_built_in_policies_are_loaded_by_name(installed):
+    assert plugins.load_event_policy("concurrent") is EventPolicy
+    assert plugins.load_event_policy("interrupt") is InterruptPolicy
+
+
+def test_no_event_policy_configured_uses_the_interrupt_policy(installed):
+    assert plugins.load_event_policy(None) is InterruptPolicy
+    assert plugins.load_event_policy("") is InterruptPolicy
+
+
+def test_an_event_policy_can_be_an_import_path(installed):
+    path = f"{__name__}:FifoPolicy"
+    assert plugins.load_event_policy(path) is FifoPolicy
+
+
+def test_an_event_policy_entry_point_that_is_not_an_event_policy_is_refused(
+    installed,
+):
+    installed[plugins.EVENT_POLICIES_GROUP].append(FakeEntryPoint("odd", ToyModule))
+    with pytest.raises(plugins.PluginError, match="EventPolicy"):
+        plugins.load_event_policy("odd")
+    with pytest.raises(plugins.PluginError, match="EventPolicy"):
+        plugins.load_event_policy(f"{__name__}:ToyModule")
+
+
+def test_an_event_policy_entry_point_cannot_reuse_a_built_in_name(installed):
+    installed[plugins.EVENT_POLICIES_GROUP].append(
+        FakeEntryPoint("interrupt", FifoPolicy, dist="acme")
+    )
+    with pytest.raises(plugins.PluginError, match="interrupt.*built-in"):
+        plugins.load_event_policy("interrupt")
+
+
+def test_a_clashing_event_policy_is_refused_even_when_not_selected(installed):
+    installed[plugins.EVENT_POLICIES_GROUP].append(
+        FakeEntryPoint("interrupt", FifoPolicy, dist="acme")
+    )
+    for call in (
+        lambda: plugins.load_event_policy(None),
+        lambda: plugins.load_event_policy(f"{__name__}:FifoPolicy"),
+        plugins.installed_event_policies,
+    ):
+        with pytest.raises(plugins.PluginError, match="built-in"):
+            call()
+
+
+def test_a_broken_event_policy_names_its_distribution(installed):
+    installed[plugins.EVENT_POLICIES_GROUP].append(
+        FakeEntryPoint("fifo", ImportError("x"), dist="acme")
+    )
+    with pytest.raises(plugins.PluginError, match="acme.*failed to import.*x"):
+        plugins.load_event_policy("fifo")

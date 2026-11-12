@@ -15,6 +15,7 @@ from typing import (
 from .dataclasses.config import LogConfig
 from .events import EventData, _safe_summary
 from .module import Module
+from .policy import EventPolicy
 
 logger = logging.getLogger("ray.serve")
 audit_logger = logging.getLogger("huri.audit")
@@ -46,6 +47,9 @@ class EventGraph:
     :audited:
         Module classes (actuation) whose every input and output is audited
         on the "huri.audit" logger.
+    :policy:
+        Decides how each published event is dispatched (EventPolicy() by
+        default: every subscriber at once).
     """
 
     def __init__(
@@ -56,11 +60,13 @@ class EventGraph:
         audited: Collection[type] = (),
         log: Optional[LogConfig] = None,
         module_ids: Optional[Mapping[int, Hashable]] = None,
+        policy: Optional[EventPolicy] = None,
     ) -> None:
         self._log = log or LogConfig()
         self._module_ids = module_ids or {}  # id(module) -> its id in the session
         self.subscribers: defaultdict[str, list[Module]] = defaultdict(list)
-        self._tasks: set[asyncio.Task] = set()
+        self._policy = policy if policy is not None else EventPolicy()
+        self._runs: dict[asyncio.Task, _Run] = {}
         self._session_id = session_id
         self._user_id = user_id
         self._labels = labels or {}
@@ -84,10 +90,37 @@ class EventGraph:
                 event_topic,
                 [self._label(m) for m in subs],
             )
-        for module in subs:
+        await self._policy.publish(self, event_topic, data)
+
+    def dispatch(self, topic, data):
+        """Start every subscriber of `topic`, as children of the current run."""
+        current = asyncio.current_task()
+        parent = self._runs.get(current) if current else None
+        for module in self.subscribers[topic]:
             task = asyncio.create_task(self._run(module, data))
-            self._tasks.add(task)
-            task.add_done_callback(self._tasks.discard)
+            # shortcut: the lineage chain grows one node per hop if a pipeline loops
+            # on its own topics (and a rule then reaches every earlier producer's
+            # descendants), add a depth bound when a looping pipeline exists
+            self._runs[task] = _Run(module, parent)
+            task.add_done_callback(self._forget)
+
+    def cancel(self, topics) -> int:
+        """
+        Cancel every running task that produces one of `topics`, or that such
+        a task started, except the current task. Returns how many.
+        """
+        current = asyncio.current_task()
+        cancelled = 0
+        for task, run in self._runs.items():
+            node: _Run | None = run
+            while node is not None and node.module.output_type not in topics:
+                node = node.parent
+            if node is not None and task is not current and task.cancel():
+                cancelled += 1
+        return cancelled
+
+    def _forget(self, task: asyncio.Task):
+        self._runs.pop(task, None)
 
     async def _emit(self, module: Module, item: EventData) -> None:
         logged = logger.isEnabledFor(logging.INFO) and self._log.allows(
@@ -115,6 +148,8 @@ class EventGraph:
                     module.output_type,
                     summary,
                 )
+        # No await before publish: an emitted line means dispatched, and a bus
+        # cancel lands only inside the module's own await.
         await self.publish(module.output_type, item)
 
     async def _run(self, module: Module, data):
@@ -158,9 +193,28 @@ class EventGraph:
                         label,
                     )
 
+        except asyncio.CancelledError:
+            # Else a cancelled actuation run reads like one that completed silently.
+            if type(module) in self._audited:
+                audit_logger.info(
+                    "session=%s user=%s module=%s cancelled topic=%r",
+                    self._session_id,
+                    self._user_id,
+                    label,
+                    module.input_type,
+                )
+            raise
         except Exception:
             logger.exception(
                 "[GRAPH] session=%s process() call failed in %s",
                 self._session_id,
                 label,
             )
+
+
+class _Run:
+    """A task the bus started: its module, and the run that published its input."""
+
+    def __init__(self, module: Module, parent: "_Run | None"):
+        self.module = module
+        self.parent = parent

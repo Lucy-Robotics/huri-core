@@ -328,9 +328,59 @@ class, or `requires.actuation = true` in its manifest), and the server refuses
 to start with it enabled unless its operator also lists it in
 `HURI_ACTUATION_MODULES`: a second, explicit consent, independent of
 `HURI_MODULES` and of any verified mark. Active actuation modules are logged as
-a warning at startup. Every event an opted-in actuation module receives or
-emits is logged on the `huri.audit` logger, which goes to the server log by
-default and can be routed separately.
+a warning at startup. Every event an opted-in actuation module receives,
+emits, or is cancelled in is logged on the `huri.audit` logger, which goes to
+the server log by default and can be routed separately.
+
+### Interruptions: the event policy
+
+The bus starts every subscriber of an event at once, and nothing stops work
+already running. An **event policy** decides what else happens when an event
+is published. The default policy, `interrupt`, adds interrupt rules: an event
+on topic `T` first cancels every running module task that produces one of the
+listed topics, and everything those tasks already started (even after the
+producer finished); then `T`'s subscribers start. The task that publishes `T`
+is never cancelled. With no rules, nothing changes.
+
+A client sets rules per session, in its config (or
+`HuRIClient(..., event_policy={...})`):
+
+```yaml
+event_policy:
+  interrupts:
+    acme.stop: [huri.token, huri.audio.out]
+    huri.question: [huri.token]
+```
+
+A rule naming a topic the session does not have, or an unknown key, refuses
+the session (`session_error` naming the culprit). A 0.4 server silently ignores
+`event_policy`.
+
+The operator picks the policy class with `HURI_EVENT_POLICY`: `interrupt`
+(default), `concurrent` (the plain `EventPolicy` base: no rules accepted), an
+entry point name from the `huri.event_policies` group, or an import path. An
+unknown name stops the server at startup, with an error naming it and listing
+the installed policies. To write one, subclass
+`huri_core.core.policy.EventPolicy`: `async publish(graph, topic, data)` calls
+`graph.dispatch(topic, data)` by default and `check(topics)` validates the
+rules against the session's topics: the module input and output topics plus the
+client's send and subscribe topics, so interrupt rules may only name those. A
+client's `event_policy:` keys reach the policy class as constructor keyword
+arguments, so a custom policy's `__init__` signature is its handshake schema;
+a policy that takes no arguments (like `concurrent`) refuses any non-empty
+`event_policy`.
+
+What this is not:
+
+- Cancelling on the bus is **not a hardware safety stop**. Use the actuator's
+  own stop.
+- Do not trigger a rule from a stream topic (`huri.audio.in`, `huri.voice`): it
+  would cut the listed topics on every frame and starve them.
+- Remote model work (Ray Serve replicas) may keep running until the module
+  cancels its handle call. The cancelled tasks publish nothing more.
+- Audio already sent to the client keeps playing unless the use case flushes it.
+
+Design: [issue #139](https://github.com/Lucy-Robotics/huri-core/issues/139).
 
 ### Manifests and the startup and session checks
 

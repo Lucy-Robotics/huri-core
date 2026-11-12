@@ -23,13 +23,17 @@ Public surface, i.e. what a breaking change is measured against:
 
 - the base classes modules and events derive from: `Module`,
   `ModuleWithHandle`, `ModuleWithId`, `EventData`, `JsonEvent`, `BytesEvent`;
+- the event policy interface: `huri_core.core.policy.EventPolicy` (`publish`,
+  `check`) and the `EventGraph.dispatch(topic, data)` it calls;
 - the module test harness: `huri_core.testing` (`ModuleHarness`,
   `LocalHandle`);
-- the client SDK and the client/server config schema (YAML keys);
+- the client SDK and the client/server config schema (YAML keys, including
+  `event_policy:`);
 - the wire protocol: session handshake, JSON and binary framing, topic
   namespaces, and the server's HTTP API (the `GET /modules` response);
 - the plugin entry point groups (`huri.modules`, `huri.events`,
-  `huri.commands`), the `HURI_MODULES` / `HURI_ACTUATION_MODULES` settings and
+  `huri.commands`, `huri.event_policies`), the `HURI_MODULES` /
+  `HURI_ACTUATION_MODULES` / `HURI_EVENT_POLICY` settings and
   the module manifest (`huri_module.toml`);
 - the `huri` command: how it dispatches to `huri.commands` entry points and
   the signature it calls them with (`main(argv: list[str]) -> int`).

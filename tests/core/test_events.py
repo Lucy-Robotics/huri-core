@@ -317,7 +317,7 @@ async def test_a_failing_modules_traceback_names_its_package_version_and_session
     graph.register(Failing())
 
     await graph.publish("voice", DummyEvent(0))
-    await asyncio.gather(*list(graph._tasks))
+    await asyncio.gather(*list(graph._runs))
 
     errors = [r for r in graph_logs.records if r.levelno == logging.ERROR]
     assert len(errors) == 1
@@ -415,7 +415,7 @@ async def test_a_module_without_a_label_is_logged_by_its_class_name(graph_logs):
     graph.register(Plain())
 
     await graph.publish("in", DummyEvent(0))
-    await asyncio.gather(*list(graph._tasks))
+    await asyncio.gather(*list(graph._runs))
 
     lines = _graph_lines(graph_logs)
     assert any("session=- Plain -> 'out'" in line for line in lines)
