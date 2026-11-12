@@ -153,7 +153,8 @@ Failures say which module, which topic, and which package is probably missing.
 (`requires.actuation` in its manifest, or `actuation = True` on its class); the
 server will not start with it unless the operator also lists it in
 `HURI_ACTUATION_MODULES`. Enabling a module is not consenting to it moving a
-robot, and neither is a verified mark.
+robot, and neither is a verified mark. Every event such a module receives or
+emits is logged on the `huri.audit` logger (server log by default, routable separately).
 
 **Both allow-lists are per deployment.** Every session on a server can use
 every module that server enables, actuation modules included. Tenants that need

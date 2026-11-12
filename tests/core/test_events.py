@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from dataclasses import dataclass
 
 import pytest
@@ -230,3 +231,190 @@ async def test_recursive_routing():
     await graph.publish("a", DummyEvent(1))
 
     await asyncio.wait_for(done.wait(), timeout=1)
+
+
+# ---------------------------------------------------------------------------
+# observability: session id, module labels, audit
+# ---------------------------------------------------------------------------
+
+STT = "stt (huri-module-stt 0.3.1)"
+SERVO = "servo (acme-servo 0.1.0)"
+
+
+def _graph_lines(logs):
+    return [r.getMessage() for r in logs.records if r.name == "ray.serve"]
+
+
+def _audit_lines(logs):
+    return [r.getMessage() for r in logs.records if r.name == "huri.audit"]
+
+
+def _stt_graph(done):
+    class Stt(DummyModule):
+        input_type = "huri.audio.in"
+        output_type = "huri.transcript"
+
+        async def process(self, data):
+            return DummyEvent(1)
+
+    class Sink(DummyModule):
+        input_type = "huri.transcript"
+
+        async def process(self, data):
+            done.set()
+
+    graph = EventGraph("s-1", "alice", {Stt: STT})
+    graph.register(Stt())
+    graph.register(Sink())
+    return graph
+
+
+@pytest.mark.asyncio
+async def test_pipeline_log_lines_name_the_session_and_the_module_version(graph_logs):
+    done = asyncio.Event()
+    graph = _stt_graph(done)
+
+    await graph.publish("huri.audio.in", DummyEvent(0))
+    await asyncio.wait_for(done.wait(), timeout=1)
+
+    lines = _graph_lines(graph_logs)
+    assert any(
+        "session=s-1" in line and STT in line and "huri.transcript" in line
+        for line in lines
+    )
+    assert any(
+        "publish topic='huri.transcript'" in line and "session=s-1" in line
+        for line in lines
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["coroutine", "generator", "call"])
+async def test_a_failing_modules_traceback_names_its_package_version_and_session(
+    graph_logs, kind
+):
+    class Failing(DummyModule):
+        input_type = "voice"
+
+        if kind == "coroutine":
+
+            async def process(self, data):
+                raise RuntimeError("boom")
+
+        elif kind == "generator":
+
+            async def process(self, data):
+                raise RuntimeError("boom")
+                yield  # pragma: no cover
+
+        else:
+
+            def process(self, data):
+                raise RuntimeError("boom")
+
+    graph = EventGraph("s-1", "alice", {Failing: STT})
+    graph.register(Failing())
+
+    await graph.publish("voice", DummyEvent(0))
+    await asyncio.gather(*list(graph._tasks))
+
+    errors = [r for r in graph_logs.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert "session=s-1" in errors[0].getMessage()
+    assert STT in errors[0].getMessage()
+    assert errors[0].exc_info is not None
+
+
+@pytest.mark.asyncio
+async def test_every_event_an_actuation_module_emits_is_audited(graph_logs):
+    class Servo(DummyModule):
+        input_type = "go"
+        output_type = "servo.angles"
+
+        async def process(self, data):
+            yield DummyEvent(7)
+            yield None
+            yield DummyEvent(8)
+
+    done = asyncio.Event()
+
+    class Sink(DummyModule):
+        input_type = "servo.angles"
+        seen = 0
+
+        async def process(self, data):
+            Sink.seen += 1
+            if Sink.seen == 2:
+                done.set()
+
+    graph = EventGraph("s-1", "lab-robot-1", {Servo: SERVO}, {Servo})
+    graph.register(Servo())
+    graph.register(Sink())
+
+    await graph.publish("go", DummyEvent(0))
+    await asyncio.wait_for(done.wait(), timeout=1)
+
+    emitted = [line for line in _audit_lines(graph_logs) if "emitted" in line]
+    assert len(emitted) == 2
+    for line in emitted:
+        assert "session=s-1" in line
+        assert "user=lab-robot-1" in line
+        assert SERVO in line
+        assert "topic='servo.angles'" in line
+    assert "DummyEvent(value=7)" in emitted[0]
+
+
+@pytest.mark.asyncio
+async def test_every_event_an_actuation_module_receives_is_audited(graph_logs):
+    done = asyncio.Event()
+
+    class Driver(DummyModule):
+        input_type = "servo.angles"
+
+        async def process(self, data):
+            done.set()
+
+    graph = EventGraph("s-1", "lab-robot-1", {Driver: SERVO}, {Driver})
+    graph.register(Driver())
+
+    await graph.publish("servo.angles", DummyEvent(5))
+    await asyncio.wait_for(done.wait(), timeout=1)
+
+    lines = _audit_lines(graph_logs)
+    assert len(lines) == 1
+    assert "received" in lines[0]
+    assert "session=s-1" in lines[0]
+    assert "user=lab-robot-1" in lines[0]
+    assert SERVO in lines[0]
+    assert "topic='servo.angles'" in lines[0]
+    assert "DummyEvent(value=5)" in lines[0]
+
+
+@pytest.mark.asyncio
+async def test_a_non_actuation_module_writes_no_audit_line(graph_logs):
+    done = asyncio.Event()
+    graph = _stt_graph(done)
+
+    await graph.publish("huri.audio.in", DummyEvent(0))
+    await asyncio.wait_for(done.wait(), timeout=1)
+
+    assert _audit_lines(graph_logs) == []
+
+
+@pytest.mark.asyncio
+async def test_a_module_without_a_label_is_logged_by_its_class_name(graph_logs):
+    class Plain(DummyModule):
+        input_type = "in"
+        output_type = "out"
+
+        async def process(self, data):
+            return DummyEvent(1)
+
+    graph = EventGraph()
+    graph.register(Plain())
+
+    await graph.publish("in", DummyEvent(0))
+    await asyncio.gather(*list(graph._tasks))
+
+    lines = _graph_lines(graph_logs)
+    assert any("session=- Plain -> 'out'" in line for line in lines)

@@ -1,4 +1,4 @@
-from typing import List
+from typing import Collection, List, Mapping, Optional
 
 from .bus import EventGraph
 from .module import Module
@@ -19,8 +19,15 @@ class Session:
         Internal asynchronous event routing system.
     """
 
-    def __init__(self, modules: List[Module]):
-        self.event_graph = EventGraph()
+    def __init__(
+        self,
+        modules: List[Module],
+        session_id: str = "-",
+        user_id: str = "-",
+        labels: Optional[Mapping[type, str]] = None,
+        audited: Collection[type] = (),
+    ) -> None:
+        self.event_graph = EventGraph(session_id, user_id, labels, audited)
 
         for module in modules:
             self.event_graph.register(module)
