@@ -1,6 +1,7 @@
-from typing import Collection, List, Mapping, Optional
+from typing import Collection, Hashable, List, Mapping, Optional
 
 from .bus import EventGraph
+from .dataclasses.config import LogConfig
 from .module import Module
 
 
@@ -26,8 +27,12 @@ class Session:
         user_id: str = "-",
         labels: Optional[Mapping[type, str]] = None,
         audited: Collection[type] = (),
+        log: Optional[LogConfig] = None,
+        module_ids: Optional[Mapping[int, Hashable]] = None,
     ) -> None:
-        self.event_graph = EventGraph(session_id, user_id, labels, audited)
+        self.event_graph = EventGraph(
+            session_id, user_id, labels, audited, log=log, module_ids=module_ids
+        )
 
         for module in modules:
             self.event_graph.register(module)

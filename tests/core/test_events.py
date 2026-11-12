@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import pytest
 
 from huri_core.core.bus import EventGraph
+from huri_core.core.dataclasses.config import LogConfig
 from huri_core.core.events import BytesEvent, EventData, JsonEvent
 
 # ---------------------------------------------------------------------------
@@ -418,3 +419,41 @@ async def test_a_module_without_a_label_is_logged_by_its_class_name(graph_logs):
 
     lines = _graph_lines(graph_logs)
     assert any("session=- Plain -> 'out'" in line for line in lines)
+
+
+@pytest.mark.asyncio
+async def test_the_audit_trail_ignores_the_sessions_log_levels(graph_logs):
+    class Servo(DummyModule):
+        input_type = "go"
+        output_type = "servo.angles"
+
+        async def process(self, data):
+            yield DummyEvent(7)
+
+    done = asyncio.Event()
+
+    class Sink(DummyModule):
+        input_type = "servo.angles"
+
+        async def process(self, data):
+            done.set()
+
+    servo = Servo()
+    log = LogConfig(
+        modules={"servo": logging.CRITICAL}, topics={"servo.angles": logging.CRITICAL}
+    )
+    graph = EventGraph(
+        "s-1", "lab-robot-1", {Servo: SERVO}, {Servo}, log, {id(servo): "servo"}
+    )
+    graph.register(servo)
+    graph.register(Sink())
+
+    await graph.publish("go", DummyEvent(0))
+    await asyncio.wait_for(done.wait(), timeout=1)
+
+    audit = _audit_lines(graph_logs)
+    assert [("received" in x, "emitted" in x) for x in audit] == [
+        (True, False),
+        (False, True),
+    ]
+    assert not [x for x in _graph_lines(graph_logs) if "[GRAPH]" in x and " -> " in x]

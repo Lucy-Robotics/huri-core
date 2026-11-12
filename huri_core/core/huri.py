@@ -186,14 +186,23 @@ class HuRI:
             print(f"[HuRI] rejected session for {user}: {e}")
             return
 
-        senders: List[Module] = [Sender(ws, topic) for topic in topic_list]
+        senders: List[Module] = [
+            Sender(ws, topic, client_config.log) for topic in topic_list
+        ]
         modules: List[Module] = pipeline + senders
 
         await ws.send_json({"type": "session_init", "user_id": client_config.user_id})
 
         session_id = str(uuid.uuid4())
+        module_ids = {id(m): mid for mid, m in zip(client_config.modules, pipeline)}
         self.clients[session_id] = Session(
-            modules, session_id, client_config.user_id, self.labels, self.audited
+            modules,
+            session_id,
+            client_config.user_id,
+            self.labels,
+            self.audited,
+            log=client_config.log,
+            module_ids=module_ids,
         )
         print(f"Client registered with _user_id={client_config.user_id}, \
 config: {client_config}")

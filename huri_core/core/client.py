@@ -40,8 +40,8 @@ from typing import (
 import websockets
 from omegaconf import OmegaConf
 
-from huri_core.core.dataclasses.config import ClientConfig
-from huri_core.core.events import EventData
+from huri_core.core.dataclasses.config import ClientConfig, LogConfig
+from huri_core.core.events import EventData, _safe_summary
 from huri_core.core.user_config import get_or_create_and_save_user_id
 
 logger = logging.getLogger("huri.client")
@@ -114,6 +114,10 @@ class HuRIClient:
         has a producer, and send() refuses any other topic.
     :user_id: identity the server keeps per-user state under (RAG memory).
         A random one is used when omitted.
+    :log: traffic log levels, as in the YAML `log:` section
+        ({"modules": {id: "WARNING"}, "topics": {topic: "INFO"}}). Sent in the
+        handshake for the server's logs; here, the sent/received lines the client
+        writes at DEBUG on the ``huri.client`` logger skip the topics set above DEBUG.
     :connect_kwargs: extra options for ``websockets.connect`` (e.g. ``ssl`` for
         a server with a private CA, ``additional_headers``). By default the
         message size limit is lifted (``max_size=None``): audio and motion
@@ -126,6 +130,7 @@ class HuRIClient:
         modules: Mapping[str, Mapping[str, Any]],
         sends: Iterable[str] = (),
         user_id: Optional[str] = None,
+        log: Optional[Mapping[str, Any]] = None,
         connect_kwargs: Optional[Mapping[str, Any]] = None,
     ):
         self.url = url
@@ -134,6 +139,9 @@ class HuRIClient:
         self.modules = {k: dict(v) for k, v in modules.items()}
         self.sends = list(sends)
         self.user_id = user_id or str(uuid.uuid4())
+        self.log = (
+            LogConfig() if log is None else LogConfig.from_dict(log, self.modules)
+        )
         self._subs: Dict[str, _Subscription] = {}
         self._ws: Optional[websockets.ClientConnection] = None
         self._tasks: List[asyncio.Task] = []
@@ -150,6 +158,7 @@ class HuRIClient:
             modules={k: m.to_dict() for k, m in config.modules.items()},
             sends=config.send,
             user_id=config.user_id,
+            log=config.log.to_dict(),
         )
 
     # --- configuration ----------------------------------------------------
@@ -188,12 +197,15 @@ class HuRIClient:
     def handshake(self) -> Dict[str, Any]:
         """The session request sent to the server."""
 
-        return {
+        request: Dict[str, Any] = {
             "user_id": self.user_id,
             "modules": self.modules,
             "subscribe": sorted(self._subs),
             "send": self.sends,
         }
+        if log := self.log.to_dict():
+            request["log"] = log
+        return request
 
     # --- connection ---------------------------------------------------------
 
@@ -251,6 +263,12 @@ class HuRIClient:
 
     # --- traffic -----------------------------------------------------------
 
+    def _traces(self, topic: str) -> bool:
+        # Checked before summarizing: summarize() must not run when nothing is logged.
+        return logger.isEnabledFor(logging.DEBUG) and self.log.allows(
+            logging.DEBUG, topic
+        )
+
     async def send(self, topic: str, event: EventData) -> None:
         if self._ws is None:
             raise RuntimeError("not connected")
@@ -260,6 +278,8 @@ class HuRIClient:
                 "so the server can check the session wiring"
             )
         await self._ws.send(encode(topic, event))
+        if self._traces(topic):
+            logger.debug("sent %r: %s", topic, _safe_summary(event))
 
     async def _receive_loop(self, ws: websockets.ClientConnection) -> None:
         try:
@@ -282,6 +302,8 @@ class HuRIClient:
             except Exception:
                 logger.exception("cannot decode %r frame as %s", topic, sub.event_cls)
                 continue
+            if self._traces(topic):
+                logger.debug("received %r: %s", topic, _safe_summary(event))
             for handler in sub.concurrent:
                 task = asyncio.create_task(self._call(topic, handler, event))
                 self._handler_tasks.add(task)
