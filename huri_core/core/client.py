@@ -2,6 +2,7 @@
 
     client = HuRIClient(url, modules={"rag": {"name": "rag"}}, sends=["huri.question"])
     client.on("huri.token", Token, handle_token)
+    client.on_connection(show_status)  # ConnectionMessage: connected, refused...
     async with client:
         await client.send("huri.question", RAGQuestion(...))
         await client.wait_closed()
@@ -30,6 +31,7 @@ from typing import (
     Dict,
     Iterable,
     List,
+    Literal,
     Mapping,
     Optional,
     Set,
@@ -57,6 +59,19 @@ class HuRISessionError(RuntimeError):
         self.error = error
         self.server_modules = server_modules or []
         super().__init__(error)
+
+
+ConnectionStatus = Literal["connected", "refused", "error", "closed"]
+
+
+@dataclass
+class ConnectionMessage:
+    """A change of the session's connection, given to on_connection handlers."""
+
+    status: ConnectionStatus
+    detail: str = ""  # refusal reason, error text, or close reason
+    code: Optional[int] = None  # websocket close code, for "closed"
+    server_modules: List[str] = field(default_factory=list)  # for "refused"
 
 
 @dataclass
@@ -147,6 +162,9 @@ class HuRIClient:
         self._tasks: List[asyncio.Task] = []
         # Concurrent handler calls; each discards itself when done.
         self._handler_tasks: Set[asyncio.Task] = set()
+        self._connection_handlers: List[
+            Callable[[ConnectionMessage], Awaitable[None]]
+        ] = []
 
     @classmethod
     def from_config(cls, config: ClientConfig) -> "HuRIClient":
@@ -194,6 +212,14 @@ class HuRIClient:
             )
         (sub.concurrent if concurrent else sub.handlers).append(handler)
 
+    def on_connection(
+        self, handler: Callable[[ConnectionMessage], Awaitable[None]]
+    ) -> None:
+        """Call `handler(message)` when the session connects, is refused, fails
+        to connect or closes. Can be registered at any time."""
+
+        self._connection_handlers.append(handler)
+
     def handshake(self) -> Dict[str, Any]:
         """The session request sent to the server."""
 
@@ -210,7 +236,12 @@ class HuRIClient:
     # --- connection ---------------------------------------------------------
 
     async def connect(self) -> "HuRIClient":
-        ws = await websockets.connect(self.url, **self.connect_kwargs)
+        try:
+            ws = await websockets.connect(self.url, **self.connect_kwargs)
+        except Exception as e:
+            await self._report_error(e)
+            raise
+        refusal: Optional[ConnectionMessage] = None
         try:
             await ws.send(json.dumps(self.handshake()))
             try:
@@ -220,13 +251,21 @@ class HuRIClient:
                     "the server closed the connection without a session reply"
                 ) from e
             if reply.get("type") == "session_error":
-                raise HuRISessionError(
+                error = HuRISessionError(
                     reply.get("error", ""), reply.get("server_modules")
                 )
+                refusal = ConnectionMessage(
+                    "refused", error.error, server_modules=error.server_modules
+                )
+                raise error
             if reply.get("type") != "session_init":
                 raise HuRISessionError(f"unexpected first message: {reply!r}")
-        except BaseException:
+        except BaseException as e:
             await ws.close()
+            if refusal is not None:
+                await self._report(refusal)
+            elif isinstance(e, Exception):
+                await self._report_error(e)
             raise
 
         self.user_id = reply.get("user_id", self.user_id)
@@ -236,18 +275,42 @@ class HuRIClient:
             asyncio.create_task(self._dispatch_loop(topic, sub))
             for topic, sub in self._subs.items()
         ]
+        await self._report(ConnectionMessage("connected"))
         return self
 
     async def close(self) -> None:
-        tasks = [*self._tasks, *self._handler_tasks]
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        self._tasks = []
+        """Close the session and wait for the "closed" handlers to finish (a
+        handler that never returns makes close() hang). Callable from any
+        handler. From an event handler, that handler is cancelled at its next
+        await: do not reconnect from there. From a "connected" handler, the
+        handlers after it see "closed" before "connected". Concurrent handler
+        calls still running are cancelled."""
+
+        ws, self._ws = self._ws, None
+        if ws is None:  # not connected, or already closed
+            return
+        tasks, self._tasks = self._tasks, []
+        handler_tasks = list(self._handler_tasks)
         self._handler_tasks.clear()
-        if self._ws is not None:
-            await self._ws.close()
-            self._ws = None
+        # Called from a handler, the current task cannot await itself.
+        current = asyncio.current_task()
+        receive, *dispatch = tasks  # as connect() creates them
+        # Before the ws closes, so no handler sends on a closed ws and no
+        # dispatch loop starts a call that close() would miss.
+        for task in (*dispatch, *handler_tasks):
+            if task is not current:
+                task.cancel()
+        await ws.close()
+        # The receive loop is not cancelled: it ends with the ws and reports
+        # "closed", and its handlers must not be cut off.
+        await asyncio.gather(
+            *(t for t in (*tasks, *handler_tasks) if t is not current),
+            return_exceptions=True,
+        )
+        if current in dispatch or current in handler_tasks:
+            # A handler closed the client: it stops at its next await, so a
+            # reconnect does not get two loops on one queue.
+            current.cancel()
 
     async def __aenter__(self) -> "HuRIClient":
         return await self.connect()
@@ -292,6 +355,19 @@ class HuRIClient:
                 sub.queue.put_nowait(data)
         except websockets.ConnectionClosed:
             pass
+        await self._report(
+            ConnectionMessage("closed", ws.close_reason or "", code=ws.close_code)
+        )
+
+    async def _report_error(self, e: Exception) -> None:
+        await self._report(ConnectionMessage("error", f"{type(e).__name__}: {e}"))
+
+    async def _report(self, message: ConnectionMessage) -> None:
+        for handler in list(self._connection_handlers):
+            try:
+                await handler(message)
+            except Exception:
+                logger.exception("connection handler failed on %r", message.status)
 
     async def _dispatch_loop(self, topic: str, sub: _Subscription) -> None:
         while True:

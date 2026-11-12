@@ -3,12 +3,14 @@
 import asyncio
 import json
 import logging
+import socket
 from dataclasses import dataclass
 
 import pytest
 import websockets
 
 from huri_core.core.client import (
+    ConnectionMessage,
     HuRIClient,
     HuRISessionError,
     decode,
@@ -27,9 +29,11 @@ class Text(JsonEvent):
 class FakeHuRI:
     """Accepts or rejects the handshake, records frames, sends scripted ones."""
 
-    def __init__(self, reply=None, outgoing=()):
+    def __init__(self, reply=None, outgoing=(), close_with=None, drop=False):
         self.reply = reply or {"type": "session_init", "user_id": "u-server"}
         self.outgoing = list(outgoing)
+        self.close_with = close_with
+        self.drop = drop
         self.handshake = None
         self.received = []
 
@@ -41,6 +45,12 @@ class FakeHuRI:
             return
         for frame in self.outgoing:
             await ws.send(frame)
+        if self.drop:  # no close frame, as a crash or a network cut
+            ws.transport.abort()
+            return
+        if self.close_with is not None:
+            await ws.close(*self.close_with)
+            return
         async for message in ws:
             self.received.append(decode(message))
 
@@ -271,6 +281,65 @@ def test_closing_the_client_cancels_concurrent_handlers_still_running():
             assert all(t.cancelled() for t in tasks)
 
     run(scenario())
+
+
+def test_closing_the_client_cancels_a_concurrent_call_before_the_connection_closes(
+    caplog,
+):
+    async def scenario():
+        tasks, resumed = [], []
+
+        async def handler(event: Text):
+            tasks.append(asyncio.current_task())
+            await client.wait_closed()  # wakes as soon as the connection closes
+            resumed.append(event.text)
+            await client.send("toy.question", event)
+
+        frames = [encode("toy.token", Text("hello"))]
+        async with FakeHuRI(outgoing=frames) as server:
+            client = HuRIClient(server.url, modules={}, sends=["toy.question"])
+            client.on("toy.token", Text, handler, concurrent=True)
+            await client.connect()
+            await until(lambda: tasks)
+            with caplog.at_level(logging.ERROR, logger="huri.client"):
+                await asyncio.wait_for(client.close(), 1)
+            # Checked before asyncio.run() shutdown cancels leftovers itself.
+            assert tasks[0].cancelled()
+        return resumed
+
+    assert run(scenario()) == []
+    assert not caplog.records
+
+
+def test_closing_the_client_starts_no_new_concurrent_call():
+    async def scenario():
+        tasks, ends = [], []
+        never, gate = asyncio.Event(), asyncio.Event()
+
+        async def stuck(event: Text):
+            tasks.append(asyncio.current_task())
+            await never.wait()
+
+        async def gated(event: Text):
+            await gate.wait()
+
+        # "toy.end" is received after "b": once it is handled, "b" is queued.
+        frames = [encode("toy.token", Text(t)) for t in "ab"]
+        frames.append(encode("toy.end", Text("end")))
+        async with FakeHuRI(outgoing=frames) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on("toy.token", Text, stuck, concurrent=True)
+            client.on("toy.token", Text, gated)
+            client.on("toy.end", Text, lambda e: _append(ends, e))
+            await client.connect()
+            await until(lambda: ends and tasks)
+            gate.set()  # "a" ends during close(): "b" must not start
+            await asyncio.wait_for(client.close(), 1)
+            # Checked before asyncio.run() shutdown cancels leftovers itself.
+            assert all(t.cancelled() for t in tasks)
+        return len(tasks)
+
+    assert run(scenario()) == 1
 
 
 def test_subscribing_after_connecting_is_refused():
@@ -525,3 +594,281 @@ def test_a_client_given_an_unknown_log_level_fails_before_connecting():
         HuRIClient(
             "ws://127.0.0.1:1", modules={}, log={"topics": {"toy.token": "LOUD"}}
         )
+
+
+def _recorder():
+    seen = []
+
+    async def record(message: ConnectionMessage):
+        seen.append(message)
+
+    return seen, record
+
+
+def test_an_opened_session_is_reported_as_connected():
+    seen, record = _recorder()
+
+    async def scenario():
+        async with FakeHuRI() as server:
+            client = HuRIClient(server.url, modules={})
+            client.on_connection(record)
+            async with client:
+                return list(seen)
+
+    assert run(scenario()) == [ConnectionMessage("connected")]
+
+
+def test_a_refused_session_is_reported_before_the_error_is_raised():
+    seen, record = _recorder()
+    reply = {
+        "type": "session_error",
+        "error": "unknown module 'tts'",
+        "server_modules": ["stt"],
+    }
+
+    async def scenario():
+        async with FakeHuRI(reply=reply) as server:
+            client = HuRIClient(server.url, modules={"tts": {"name": "tts"}})
+            client.on_connection(record)
+            with pytest.raises(HuRISessionError) as exc:
+                await client.connect()
+            return exc.value
+
+    error = run(scenario())
+    assert seen == [
+        ConnectionMessage(
+            "refused", detail="unknown module 'tts'", server_modules=["stt"]
+        )
+    ]
+    assert error.error == "unknown module 'tts'" and error.server_modules == ["stt"]
+
+
+def test_an_unreachable_server_is_reported_as_an_error():
+    seen, record = _recorder()
+    with socket.socket() as sock:  # a port nobody listens on once closed
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    client = HuRIClient(f"ws://127.0.0.1:{port}", modules={})
+    client.on_connection(record)
+    with pytest.raises(OSError) as exc:
+        run(client.connect())
+    assert seen == [
+        ConnectionMessage("error", detail=f"{type(exc.value).__name__}: {exc.value}")
+    ]
+
+
+def test_a_session_closed_by_the_server_is_reported_with_its_code():
+    seen, record = _recorder()
+
+    async def scenario():
+        async with FakeHuRI(close_with=(1011, "pipeline stopped")) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on_connection(record)
+            async with client:
+                await until(lambda: len(seen) == 2)
+
+    run(scenario())
+    assert seen == [
+        ConnectionMessage("connected"),
+        ConnectionMessage("closed", detail="pipeline stopped", code=1011),
+    ]
+
+
+def test_closing_the_client_reports_closed_once():
+    seen, record = _recorder()
+
+    async def scenario():
+        async with FakeHuRI() as server:
+            client = HuRIClient(server.url, modules={})
+            client.on_connection(record)
+            async with client:
+                pass
+
+    run(scenario())
+    assert seen == [
+        ConnectionMessage("connected"),
+        ConnectionMessage("closed", code=1000),
+    ]
+
+
+def test_a_failing_connection_handler_does_not_break_the_session():
+    async def broken(message: ConnectionMessage):
+        raise RuntimeError("handler bug")
+
+    async def scenario():
+        async with FakeHuRI() as server:
+            client = HuRIClient(server.url, modules={}, sends=["toy.question"])
+            client.on_connection(broken)
+            async with client:
+                await client.send("toy.question", Text("still here"))
+                await until(lambda: server.received)
+            return server.received
+
+    assert run(scenario()) == [("toy.question", {"text": "still here"})]
+
+
+def test_a_dropped_connection_is_reported_as_closed_with_1006():
+    seen, record = _recorder()
+
+    async def scenario():
+        async with FakeHuRI(drop=True) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on_connection(record)
+            async with client:
+                await client.wait_closed()
+
+    run(scenario())
+    assert seen == [
+        ConnectionMessage("connected"),
+        ConnectionMessage("closed", code=1006),
+    ]
+
+
+def test_a_slow_handler_gets_closed_when_the_client_exits_after_the_server():
+    seen = []
+
+    async def slow(message: ConnectionMessage):
+        await asyncio.sleep(0.05)
+        seen.append(("slow", message.status, message.code))
+
+    async def fast(message: ConnectionMessage):
+        seen.append(("fast", message.status, message.code))
+
+    async def scenario():
+        async with FakeHuRI(close_with=(1011, "pipeline stopped")) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on_connection(slow)
+            client.on_connection(fast)
+            async with client:
+                await client.wait_closed()
+
+    run(scenario())
+    assert seen == [
+        ("slow", "connected", None),
+        ("fast", "connected", None),
+        ("slow", "closed", 1011),
+        ("fast", "closed", 1011),
+    ]
+
+
+def test_a_connection_handler_can_close_the_client():
+    seen = []
+
+    async def scenario():
+        async with FakeHuRI(close_with=(1011, "pipeline stopped")) as server:
+            client = HuRIClient(server.url, modules={})
+
+            async def closing(message: ConnectionMessage):
+                if message.status == "closed":
+                    await client.close()
+                    seen.append("closed from a handler")
+
+            async def record(message: ConnectionMessage):
+                seen.append(message.status)
+
+            client.on_connection(closing)
+            client.on_connection(record)
+            await client.connect()
+            await until(lambda: "closed" in seen)
+            await client.close()
+
+    run(scenario())
+    assert seen == ["connected", "closed from a handler", "closed"]
+
+
+def test_a_reused_client_reports_each_session():
+    seen, record = _recorder()
+
+    async def scenario():
+        async with FakeHuRI() as server:
+            client = HuRIClient(server.url, modules={})
+            client.on_connection(record)
+            async with client:
+                pass
+            async with client:
+                pass
+
+    run(scenario())
+    assert [(m.status, m.code) for m in seen] == [
+        ("connected", None),
+        ("closed", 1000),
+        ("connected", None),
+        ("closed", 1000),
+    ]
+
+
+def test_an_event_handler_can_close_the_client():
+    seen = []
+
+    def dispatching():
+        return [
+            t
+            for t in asyncio.all_tasks()
+            if t.get_coro().__qualname__.endswith("_dispatch_loop")
+        ]
+
+    async def scenario():
+        frames = [encode("toy.token", Text("bye"))]
+        async with FakeHuRI(outgoing=frames) as server:
+            client = HuRIClient(server.url, modules={})
+
+            async def closing(event: Text):
+                await client.close()
+                seen.append(event.text)
+
+            client.on("toy.token", Text, closing)
+            await client.connect()
+            await until(lambda: seen and not dispatching())
+
+    run(scenario())
+    assert seen == ["bye"]
+
+
+def test_a_concurrent_handler_can_close_the_client():
+    seen, record = _recorder()
+
+    async def scenario():
+        calls = []
+        frames = [encode("toy.token", Text("bye"))]
+        async with FakeHuRI(outgoing=frames) as server:
+            client = HuRIClient(server.url, modules={})
+
+            async def closing(event: Text):
+                calls.append(asyncio.current_task())
+                await client.close()
+                calls.append(event.text)
+                await asyncio.sleep(0)  # cancelled here, its next await
+                calls.append("went on")
+
+            client.on("toy.token", Text, closing, concurrent=True)
+            client.on_connection(record)
+            await client.connect()
+            await asyncio.wait_for(until(lambda: calls and calls[0].done()), 1)
+            assert calls[0].cancelled()
+            await client.close()  # already closed: no second "closed"
+        return calls[1:]
+
+    assert run(scenario()) == ["bye"]
+    assert seen == [
+        ConnectionMessage("connected"),
+        ConnectionMessage("closed", code=1000),
+    ]
+
+
+def test_a_broken_handshake_is_reported_as_an_error():
+    seen, record = _recorder()
+
+    async def scenario():
+        async with FakeHuRI(reply={"type": "bogus"}) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on_connection(record)
+            with pytest.raises(HuRISessionError, match="unexpected first message"):
+                await client.connect()
+
+    run(scenario())
+    assert seen == [
+        ConnectionMessage(
+            "error",
+            detail="HuRISessionError: unexpected first message: {'type': 'bogus'}",
+        )
+    ]
