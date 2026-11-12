@@ -6,27 +6,18 @@ from typing import (
     AsyncGenerator,
     Collection,
     Coroutine,
+    Hashable,
     Mapping,
     Optional,
     cast,
 )
 
-from .events import EventData
+from .dataclasses.config import LogConfig
+from .events import EventData, _safe_summary
 from .module import Module
 
 logger = logging.getLogger("ray.serve")
 audit_logger = logging.getLogger("huri.audit")
-
-
-def _safe_summary(event: EventData) -> str:
-    """
-    summarize() for logging, which must never be able to drop an event.
-    """
-
-    try:
-        return event.summarize()
-    except Exception:  # noqa: BLE001 - logging must not raise
-        return f"<{type(event).__name__} summarize() failed>"
 
 
 class EventGraph:
@@ -63,7 +54,11 @@ class EventGraph:
         user_id: str = "-",
         labels: Optional[Mapping[type, str]] = None,
         audited: Collection[type] = (),
+        log: Optional[LogConfig] = None,
+        module_ids: Optional[Mapping[int, Hashable]] = None,
     ) -> None:
+        self._log = log or LogConfig()
+        self._module_ids = module_ids or {}  # id(module) -> its id in the session
         self.subscribers: defaultdict[str, list[Module]] = defaultdict(list)
         self._tasks: set[asyncio.Task] = set()
         self._session_id = session_id
@@ -80,7 +75,9 @@ class EventGraph:
     async def publish(self, event_topic, data):
         subs = self.subscribers[event_topic]
 
-        if event_topic not in ("huri.audio.in",):
+        if logger.isEnabledFor(logging.INFO) and self._log.allows(
+            logging.INFO, event_topic
+        ):
             logger.info(
                 "[GRAPH] session=%s publish topic=%r subscribers=%s",
                 self._session_id,
@@ -93,24 +90,31 @@ class EventGraph:
             task.add_done_callback(self._tasks.discard)
 
     async def _emit(self, module: Module, item: EventData) -> None:
-        label = self._label(module)
-        summary = _safe_summary(item)
-        logger.info(
-            "[GRAPH] session=%s %s -> %r: %s",
-            self._session_id,
-            label,
-            module.output_type,
-            summary,
+        logged = logger.isEnabledFor(logging.INFO) and self._log.allows(
+            logging.INFO, module.output_type or "", self._module_ids.get(id(module))
         )
-        if type(module) in self._audited:
-            audit_logger.info(
-                "session=%s user=%s module=%s emitted topic=%r event=%s",
-                self._session_id,
-                self._user_id,
-                label,
-                module.output_type,
-                summary,
-            )
+        # The audit trail ignores the client's log levels: a client can't hide it.
+        audited = type(module) in self._audited
+        if logged or audited:
+            label = self._label(module)
+            summary = _safe_summary(item)
+            if logged:
+                logger.info(
+                    "[GRAPH] session=%s %s -> %r: %s",
+                    self._session_id,
+                    label,
+                    module.output_type,
+                    summary,
+                )
+            if audited:
+                audit_logger.info(
+                    "session=%s user=%s module=%s emitted topic=%r event=%s",
+                    self._session_id,
+                    self._user_id,
+                    label,
+                    module.output_type,
+                    summary,
+                )
         await self.publish(module.output_type, item)
 
     async def _run(self, module: Module, data):

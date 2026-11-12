@@ -255,14 +255,16 @@ cannot silently fight over a topic: the server refuses to start instead.
 ### Sessions, the bus and the Sender
 
 A client opens a websocket on `/session` and sends a handshake: the modules of
-its pipeline, the topics it will `send`, the topics it `subscribe`s to.
+its pipeline, the topics it will `send`, the topics it `subscribe`s to, and
+optionally the `log` levels of its traffic.
 
 ```json
 {
   "user_id": "...",
   "modules": {"shout": {"name": "shout", "args": {}}},
   "send": ["echo.text"],
-  "subscribe": ["echo.loud"]
+  "subscribe": ["echo.loud"],
+  "log": {"modules": {"shout": "DEBUG"}, "topics": {"echo.text": "WARNING"}}
 }
 ```
 
@@ -275,6 +277,17 @@ and what they emit is published in turn. For each subscribed topic a `Sender`
 forwards the events to the client, framed as above. An incoming frame on a
 topic none of the server's enabled modules uses is dropped and logged; the
 session goes on.
+
+`log` sets the session's traffic log levels, per module id (a key of
+`modules`) and per topic, as `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`
+(any case); an unknown level or a module id the session does not have is a
+`session_error`. A line about an event on a topic, by a module, is logged only
+when its level reaches both the topic's and the module's level (no level: no
+filter), so `WARNING` on a chatty topic silences its traffic lines. Warnings
+and errors are never filtered, nor is the `huri.audit` trail of actuation
+modules, and `log` cannot raise the server's own `ray.serve` level, which the
+operator sets: a session's `DEBUG` shows nothing more than the server already
+logs.
 
 ### Plugins: entry points
 
@@ -425,9 +438,12 @@ calls still running. On a topic that also has ordered handlers it sees each
 event when the ordered ones have finished the previous one. Use it for
 order-free work like logging or metrics.
 
-A refused session raises `HuRISessionError` (with `server_modules`). The same
+A refused session raises `HuRISessionError` (with `server_modules`).
+`HuRIClient(..., log={"modules": {"shout": "DEBUG"}})` sends the `log` levels
+in the handshake, and the client logs each event it sends and receives at
+`DEBUG` on the `huri.client` logger, filtered by the `topics` levels. The same
 session can be written as a YAML file (`huri_url`, `modules`, `send`,
-`subscribe`), loaded with
+`subscribe`, `log`), loaded with
 `load_client_config(path)` and turned into a client with
 `HuRIClient.from_config(...)`; `load_client_config` also gives the session
 this machine's `user_id`, created once and kept in the user config directory.

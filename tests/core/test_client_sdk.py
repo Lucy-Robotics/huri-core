@@ -8,7 +8,13 @@ from dataclasses import dataclass
 import pytest
 import websockets
 
-from huri_core.core.client import HuRIClient, HuRISessionError, decode, encode
+from huri_core.core.client import (
+    HuRIClient,
+    HuRISessionError,
+    decode,
+    encode,
+    load_client_config,
+)
 from huri_core.core.dataclasses.config import ClientConfig
 from huri_core.core.events import BytesEvent, JsonEvent
 
@@ -290,6 +296,70 @@ def test_old_client_config_format_gets_a_migration_hint():
         ClientConfig.from_dict(legacy)
 
 
+def session_with_log(log):
+    return {"user_id": "u", "modules": {"shout": {"name": "shout"}}, "log": log}
+
+
+def test_a_log_level_name_is_parsed_case_insensitively_and_round_trips():
+    log = {"modules": {"shout": "debug"}, "topics": {"echo.loud": "Warning"}}
+
+    config = ClientConfig.from_dict(session_with_log(log))
+
+    assert config.log.modules == {"shout": logging.DEBUG}
+    assert config.log.topics == {"echo.loud": logging.WARNING}
+    expected = {"modules": {"shout": "DEBUG"}, "topics": {"echo.loud": "WARNING"}}
+    assert config.log.to_dict() == expected
+    assert ClientConfig.from_dict(session_with_log(expected)).log == config.log
+    assert config.log.allows(logging.DEBUG, "echo.text", "shout")
+    assert not config.log.allows(logging.INFO, "echo.loud", "shout")
+    assert not config.log.allows(logging.INFO, "echo.loud")
+
+
+@pytest.mark.parametrize("level", ["LOUD", 10, None])
+def test_an_unknown_log_level_is_refused_by_the_config(level):
+    with pytest.raises(ValueError, match=f"'?{level}'?.*DEBUG"):
+        ClientConfig.from_dict(session_with_log({"topics": {"echo.loud": level}}))
+
+
+@pytest.mark.parametrize(
+    "log",
+    ["DEBUG", [], "", 0, {"modules": ["shout"]}, {"modules": []}, {"topics": "DEBUG"}],
+)
+def test_a_log_section_of_the_wrong_shape_is_refused_by_the_config(log):
+    with pytest.raises(ValueError, match="log"):
+        ClientConfig.from_dict(session_with_log(log))
+
+
+def test_the_log_level_of_an_unknown_module_id_is_refused_by_the_config():
+    with pytest.raises(ValueError, match=r"'stt'.*\['shout'\]"):
+        ClientConfig.from_dict(session_with_log({"modules": {"stt": "DEBUG"}}))
+
+
+def test_the_log_level_of_a_numeric_module_id_is_accepted_by_the_config():
+    raw = {"user_id": "u", "modules": {1: {"name": "shout"}}}
+    raw["log"] = {"modules": {1: "DEBUG"}}
+
+    assert ClientConfig.from_dict(raw).log.modules == {1: logging.DEBUG}
+
+
+def test_the_log_level_of_module_id_zero_filters_its_lines():
+    raw = {"user_id": "u", "modules": {0: {"name": "shout"}}}
+    raw["log"] = {"modules": {0: "WARNING"}}
+
+    log = ClientConfig.from_dict(raw).log
+
+    assert not log.allows(logging.INFO, "t", 0)
+    assert log.allows(logging.WARNING, "t", 0)
+
+
+def test_a_config_without_log_filters_nothing():
+    config = ClientConfig.from_dict({"user_id": "u", "modules": {}})
+
+    assert config.log.to_dict() == {}
+    assert config.log.allows(logging.DEBUG, "echo.loud", "shout")
+    assert ClientConfig.from_dict(session_with_log(None)).log == config.log
+
+
 def test_connect_kwargs_reach_websockets_and_lift_the_size_limit(monkeypatch):
     seen = {}
 
@@ -328,3 +398,130 @@ def test_a_frame_larger_than_one_mib_is_received():
 
 async def _append(target, item):
     target.append(item)
+
+
+def _client_yaml(tmp_path, log=""):
+    path = tmp_path / "client.yaml"
+    path.write_text(
+        "huri_url: ws://127.0.0.1:1\nuser_id_file_path: "
+        f"{tmp_path / 'uid'}\nmodules:\n  shout:\n    name: shout\n{log}"
+    )
+    return path
+
+
+def _handshake_of_yaml_client(tmp_path, log=""):
+    config = load_client_config(str(_client_yaml(tmp_path, log)))
+
+    async def scenario():
+        async with FakeHuRI() as server:
+            client = HuRIClient.from_config(config)
+            client.url = server.url
+            async with client:
+                pass
+            return server.handshake
+
+    return run(scenario())
+
+
+def test_the_log_section_of_a_client_yaml_reaches_the_server_in_the_handshake(
+    tmp_path,
+):
+    log = "log:\n  modules:\n    shout: WARNING\n  topics:\n    toy.word: INFO\n"
+    assert _handshake_of_yaml_client(tmp_path, log)["log"] == {
+        "modules": {"shout": "WARNING"},
+        "topics": {"toy.word": "INFO"},
+    }
+
+
+def test_a_client_without_a_log_section_sends_the_same_handshake_as_before(tmp_path):
+    assert "log" not in _handshake_of_yaml_client(tmp_path)
+
+
+def test_the_client_logs_each_frame_it_sends_and_receives_at_debug(caplog):
+    caplog.set_level(logging.DEBUG, logger="huri.client")
+
+    async def scenario():
+        async with FakeHuRI(outgoing=[encode("toy.token", Text("ok"))]) as server:
+            client = HuRIClient(server.url, modules={}, sends=["toy.question"])
+            got = []
+            client.on("toy.token", Text, lambda e: _append(got, e))
+            async with client:
+                await client.send("toy.question", Text("hi"))
+                await until(lambda: got)
+
+    run(scenario())
+    lines = [(r.levelno, r.getMessage()) for r in caplog.records]
+    assert any(
+        lvl == logging.DEBUG and m.startswith("sent 'toy.question'") for lvl, m in lines
+    )
+    assert any(
+        lvl == logging.DEBUG and m.startswith("received 'toy.token'")
+        for lvl, m in lines
+    )
+
+
+def test_a_topic_set_to_info_has_no_traffic_lines_in_the_client_log(caplog):
+    caplog.set_level(logging.DEBUG, logger="huri.client")
+
+    async def scenario():
+        async with FakeHuRI(outgoing=[encode("toy.token", Text("ok"))]) as server:
+            client = HuRIClient(
+                server.url, modules={}, log={"topics": {"toy.token": "INFO"}}
+            )
+            got = []
+            client.on("toy.token", Text, lambda e: _append(got, e))
+            async with client:
+                await until(lambda: got)
+            return got
+
+    assert run(scenario()) == [Text("ok")]
+    assert "received 'toy.token'" not in caplog.text
+
+
+def test_a_sends_topic_set_to_info_has_no_sent_line_in_the_client_log(caplog):
+    caplog.set_level(logging.DEBUG, logger="huri.client")
+
+    async def scenario():
+        async with FakeHuRI() as server:
+            client = HuRIClient(
+                server.url,
+                modules={},
+                sends=["toy.question"],
+                log={"topics": {"toy.question": "INFO"}},
+            )
+            async with client:
+                await client.send("toy.question", Text("hi"))
+                await until(lambda: server.received)
+
+    run(scenario())
+    assert "sent 'toy.question'" not in caplog.text
+
+
+def test_a_client_logger_above_debug_never_summarizes_frames(caplog):
+    caplog.set_level(logging.INFO, logger="huri.client")
+    calls = []
+
+    @dataclass
+    class Spy(Text):
+        def summarize(self):
+            calls.append(1)
+            return "spy"
+
+    async def scenario():
+        async with FakeHuRI(outgoing=[encode("toy.token", Text("ok"))]) as server:
+            client = HuRIClient(server.url, modules={}, sends=["toy.question"])
+            got = []
+            client.on("toy.token", Spy, lambda e: _append(got, e))
+            async with client:
+                await client.send("toy.question", Spy("hi"))
+                await until(lambda: got)
+
+    run(scenario())
+    assert calls == []
+
+
+def test_a_client_given_an_unknown_log_level_fails_before_connecting():
+    with pytest.raises(ValueError, match="LOUD"):
+        HuRIClient(
+            "ws://127.0.0.1:1", modules={}, log={"topics": {"toy.token": "LOUD"}}
+        )

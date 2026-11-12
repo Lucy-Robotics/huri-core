@@ -5,6 +5,7 @@ rejections. No Ray cluster: the ingress class runs in-process on a fake socket.
 
 import asyncio
 import json
+import logging
 import struct
 from dataclasses import dataclass
 from typing import Any, Dict
@@ -324,3 +325,171 @@ def test_get_modules_imports_nothing(monkeypatch):
     monkeypatch.setattr(Upper, "__init__", forbidden)
     status, body = get(server, "/modules")
     assert status == 200 and body["modules"] == ["upper"]
+
+
+# --- per-session log levels -------------------------------------------------
+
+
+class Boom(Module):
+    input_type, output_type = "toy.word", "toy.loud"
+
+    async def process(self, data: Word):
+        raise RuntimeError("kaput")
+
+
+class Mic(Module):
+    input_type, output_type = "huri.audio.in", None
+
+    async def process(self, data: Chunk):
+        return None
+
+
+@pytest.fixture
+def serve_log(caplog):
+    """The server's log lines, whether or not importing ray cut the logger off
+    from the root handler."""
+
+    ray_logger = logging.getLogger("ray.serve")
+    ray_logger.addHandler(caplog.handler)
+    caplog.set_level(logging.INFO, logger="ray.serve")
+    yield caplog
+    ray_logger.removeHandler(caplog.handler)
+
+
+def word(text="hi"):
+    return json.dumps({"topic": "toy.word", "data": {"text": text}})
+
+
+def logged(caplog) -> str:
+    return "\n".join(r.getMessage() for r in caplog.records)
+
+
+def run(modules, log, *, subscribe=("toy.loud",), send=("toy.word",), incoming=()):
+    config = handshake(modules, list(subscribe), list(send))
+    if log is not None:
+        config["log"] = log
+    events = {**EVENTS, "huri.audio.in": Chunk}
+    server = Server(
+        {"upper": Upper, "reverse": Reverse, "boom": Boom, "mic": Mic},
+        {},
+        events,
+        (),
+    )
+    return session_on(server, FakeSocket(config, *(incoming or (word(),))))
+
+
+def test_a_module_set_to_warning_has_no_traffic_lines_in_the_server_log(serve_log):
+    ws = run(
+        {"shout": {"name": "upper"}, "back": {"name": "reverse"}},
+        {"modules": {"shout": "WARNING", "back": "DEBUG"}},
+        subscribe=("toy.loud", "toy.reversed"),
+        send=("toy.word", "toy.chunk"),
+        incoming=(word(), frame("toy.chunk", b"ab")),
+    )
+    assert {"topic": "toy.loud", "data": {"text": "HI"}} in ws.sent
+    text = logged(serve_log)
+    assert "upper (no distribution) -> 'toy.loud'" not in text
+    assert "reverse (no distribution) -> 'toy.reversed'" in text
+
+
+def test_a_topic_set_to_warning_has_no_traffic_lines_in_the_server_log(serve_log):
+    run(
+        {"shout": {"name": "upper"}},
+        {"topics": {"toy.loud": "WARNING"}},
+    )
+    text = logged(serve_log)
+    assert "publish topic='toy.loud'" not in text
+    assert "upper (no distribution) -> 'toy.loud'" not in text
+    assert "[Sender:toy.loud]" not in text
+    assert "publish topic='toy.word'" in text
+
+
+def test_log_levels_of_one_session_do_not_change_another_sessions_log(serve_log):
+    run({"shout": {"name": "upper"}}, {"topics": {"toy.word": "WARNING"}})
+    serve_log.clear()
+    run({"shout": {"name": "upper"}}, None)
+    assert "publish topic='toy.word'" in logged(serve_log)
+
+
+def test_a_session_without_a_log_section_logs_as_before(serve_log):
+    run({"shout": {"name": "upper"}}, None)
+    text = logged(serve_log)
+    assert "publish topic='toy.word'" in text
+    assert "upper (no distribution) -> 'toy.loud'" in text
+    assert "[Sender:toy.loud]" in text
+
+
+def test_a_module_failure_is_logged_whatever_the_sessions_levels(serve_log):
+    run({"bad": {"name": "boom"}}, {"modules": {"bad": "CRITICAL"}}, subscribe=())
+    errors = [
+        r
+        for r in serve_log.records
+        if "coroutine failed in boom (no distribution)" in r.message
+    ]
+    assert errors and errors[0].exc_info
+
+
+def test_a_session_asking_for_debug_does_not_lower_the_servers_log_level():
+    ray_logger = logging.getLogger("ray.serve")
+    before = ray_logger.level
+    ray_logger.setLevel(logging.INFO)
+    try:
+        run({"shout": {"name": "upper"}}, {"modules": {"shout": "DEBUG"}})
+        assert ray_logger.level == logging.INFO
+    finally:
+        ray_logger.setLevel(before)
+
+
+def test_a_session_config_with_an_unknown_log_level_is_rejected():
+    ws = run({"shout": {"name": "upper"}}, {"modules": {"shout": "LOUD"}})
+    (reply,) = ws.sent
+    assert reply["type"] == "session_error" and "LOUD" in reply["error"]
+    assert ws.closed == 1008
+
+
+def test_a_session_config_with_the_log_level_of_a_module_it_does_not_use_is_rejected():
+    ws = run({"shout": {"name": "upper"}}, {"modules": {"stt": "DEBUG"}})
+    (reply,) = ws.sent
+    assert reply["type"] == "session_error"
+    assert "stt" in reply["error"] and "shout" in reply["error"]
+    assert ws.closed == 1008
+
+
+def mic_frame():
+    return frame("huri.audio.in", b"\x00")
+
+
+def test_microphone_audio_is_no_longer_silenced_by_a_hardcoded_rule(serve_log):
+    run(
+        {"m": {"name": "mic"}},
+        None,
+        subscribe=(),
+        send=("huri.audio.in",),
+        incoming=(mic_frame(),),
+    )
+    assert "publish topic='huri.audio.in'" in logged(serve_log)
+
+
+def test_a_session_quiets_microphone_audio_through_its_log_section(serve_log):
+    run(
+        {"m": {"name": "mic"}},
+        {"topics": {"huri.audio.in": "WARNING"}},
+        subscribe=(),
+        send=("huri.audio.in",),
+        incoming=(mic_frame(),),
+    )
+    assert "publish topic='huri.audio.in'" not in logged(serve_log)
+
+
+def test_a_server_logger_above_info_never_summarizes_module_outputs(monkeypatch):
+    calls = []
+    monkeypatch.setattr(Word, "summarize", lambda self: calls.append(1) or "x")
+    ray_logger = logging.getLogger("ray.serve")
+    before = ray_logger.level
+    ray_logger.setLevel(logging.WARNING)
+    try:
+        ws = run({"shout": {"name": "upper"}}, None)
+    finally:
+        ray_logger.setLevel(before)
+    assert {"topic": "toy.loud", "data": {"text": "HI"}} in ws.sent
+    assert calls == []
