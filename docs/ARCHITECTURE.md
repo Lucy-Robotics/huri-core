@@ -153,8 +153,9 @@ Failures say which module, which topic, and which package is probably missing.
 (`requires.actuation` in its manifest, or `actuation = True` on its class); the
 server will not start with it unless the operator also lists it in
 `HURI_ACTUATION_MODULES`. Enabling a module is not consenting to it moving a
-robot, and neither is a verified mark. Every event such a module receives or
-emits is logged on the `huri.audit` logger (server log by default, routable separately).
+robot, and neither is a verified mark. Every event such a module receives,
+emits, or is cancelled in is logged on the `huri.audit` logger (server log by
+default, routable separately).
 
 **Both allow-lists are per deployment.** Every session on a server can use
 every module that server enables, actuation modules included. Tenants that need
@@ -188,6 +189,13 @@ previous one. Use it for order-free work like logging or metrics.
 Heavy models run as Ray Serve deployments (`ModuleWithHandle`); module code
 imports their libraries lazily, so the head node can import every module to
 build the app whatever its hardware.
+
+An event policy (`huri_core/core/policy.py`) decides how the bus dispatches an
+event. `EventPolicy` just calls `graph.dispatch`; the default `InterruptPolicy`
+first cancels the running tasks that produce the topics listed in the session's
+`event_policy.interrupts` rule for that event, and what they started, then
+dispatches. This is bus cancellation, not a hardware stop. See
+[Interruptions](../README.md#interruptions-the-event-policy).
 
 ## Building and trusting modules
 

@@ -118,6 +118,8 @@ class ClientConfig:
     :subscribe: topics the client receives.
     :send: topics the client publishes (module inputs it provides).
     :log: the session's traffic log levels, per module id and per topic.
+    :event_policy: the keyword arguments of the server's event policy for this
+        session, e.g. {"interrupts": {"acme.stop": ["huri.token"]}}.
     """
 
     user_id: str
@@ -126,6 +128,7 @@ class ClientConfig:
     send: List[str]
     huri_url: str = ""
     log: LogConfig = field(default_factory=LogConfig)
+    event_policy: Dict[str, Any] = field(default_factory=dict)
 
     LEGACY_KEYS = ("interface_path", "senders", "hooks")
 
@@ -138,6 +141,9 @@ class ClientConfig:
                 "receive under `subscribe:` and the topics sent under `send:` "
                 'instead (see "Client SDK" in the huri-core README)'
             )
+        event_policy = {} if raw.get("event_policy") is None else raw["event_policy"]
+        if not isinstance(event_policy, Mapping):
+            raise ValueError(f"`event_policy` must be a mapping, not {event_policy!r}")
         modules = {
             module_id: ModuleConfig.from_dict(mod_raw)
             for module_id, mod_raw in raw.get("modules", {}).items()
@@ -151,4 +157,5 @@ class ClientConfig:
             log=LogConfig.from_dict(
                 {} if raw.get("log") is None else raw["log"], modules
             ),
+            event_policy=dict(event_policy),
         )

@@ -15,6 +15,7 @@ import pytest
 from huri_core.core.events import BytesEvent, JsonEvent
 from huri_core.core.huri import HuRI
 from huri_core.core.module import Module
+from huri_core.core.policy import EventPolicy, InterruptPolicy
 
 # @serve.ingress subclasses the class it decorates (with an async __init__ for
 # Serve); its direct base is HuRI as written, which runs without Serve.
@@ -493,3 +494,201 @@ def test_a_server_logger_above_info_never_summarizes_module_outputs(monkeypatch)
         ray_logger.setLevel(before)
     assert {"topic": "toy.loud", "data": {"text": "HI"}} in ws.sent
     assert calls == []
+
+
+class RecordingPolicy(EventPolicy):
+    published = []
+
+    async def publish(self, graph, topic, data):
+        self.published.append(topic)
+        await super().publish(graph, topic, data)
+
+
+def test_swapping_the_policy_needs_no_module_change():
+    RecordingPolicy.published = []
+    server = Server(
+        {"upper": Upper, "reverse": Reverse},
+        {},
+        dict(EVENTS),
+        (),
+        event_policy=RecordingPolicy,
+    )
+    ws = session_on(
+        server,
+        FakeSocket(
+            handshake({"a": {"name": "upper"}}, ["toy.loud"], ["toy.word"]),
+            json.dumps({"topic": "toy.word", "data": {"text": "hi"}}),
+        ),
+    )
+    assert ws.sent[-1] == {"topic": "toy.loud", "data": {"text": "HI"}}
+    assert "toy.word" in RecordingPolicy.published
+
+
+def test_each_session_gets_its_own_interrupt_policy_by_default(monkeypatch):
+    # Serve re-creates the class: its methods resolve names in their own globals.
+    namespace = Server.run_session.__globals__
+    created = []
+
+    class Spy(namespace["Session"]):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            created.append(self.event_graph._policy)
+
+    monkeypatch.setitem(namespace, "Session", Spy)
+    server = Server({"upper": Upper}, {}, dict(EVENTS), ())
+    for _ in range(2):
+        session_on(
+            server,
+            FakeSocket(handshake({"a": {"name": "upper"}}, ["toy.loud"], ["toy.word"])),
+        )
+    assert [type(p) for p in created] == [InterruptPolicy, InterruptPolicy]
+    assert created[0] is not created[1]
+
+
+# --- per-session interrupt rules ----------------------------------------------
+
+
+class Stream(Module):
+    """Streams a long answer: one token, then the rest once `release` is set."""
+
+    input_type, output_type = "toy.word", "toy.token"
+    release: asyncio.Event
+    ended: asyncio.Event
+    outcome: list
+
+    async def process(self, data: Word):
+        try:
+            yield Word("first")
+            await self.release.wait()
+            yield Word("rest")
+        except asyncio.CancelledError:
+            self.outcome.append("cancelled")
+            raise
+        finally:
+            self.ended.set()
+
+
+class Halt(Module):
+    """Releases the stream: without an interruption, it would go on."""
+
+    input_type, output_type = "toy.stop", None
+
+    async def process(self, data: Word):
+        Stream.release.set()
+
+
+class LiveSocket(FakeSocket):
+    """A FakeSocket the test feeds frame by frame, telling it each frame sent."""
+
+    def __init__(self, handshake):
+        super().__init__(handshake)
+        self.inbox: "asyncio.Queue[dict]" = asyncio.Queue()
+        self.outbox: "asyncio.Queue[Any]" = asyncio.Queue()
+
+    def push(self, text=None):
+        message = (
+            {"type": "websocket.disconnect"}
+            if text is None
+            else {"type": "websocket.receive", "text": text}
+        )
+        self.inbox.put_nowait(message)
+
+    async def receive(self):
+        return await self.inbox.get()
+
+    async def send_json(self, message):
+        await super().send_json(message)
+        self.outbox.put_nowait(message)
+
+
+def streaming_server(event_policy=InterruptPolicy):
+    events = {**EVENTS, "toy.token": Word, "toy.stop": Word}
+    return Server(
+        {"stream": Stream, "halt": Halt}, {}, events, (), event_policy=event_policy
+    )
+
+
+def streaming_handshake(event_policy, subscribe=("toy.token",)):
+    config = handshake(
+        {"llm": {"name": "stream"}, "halt": {"name": "halt"}},
+        subscribe=list(subscribe),
+        send=["toy.word", "toy.stop"],
+    )
+    config["event_policy"] = event_policy
+    return config
+
+
+def test_urgent_event_cuts_short_a_running_less_urgent_stream():
+    async def scenario():
+        Stream.release, Stream.ended, Stream.outcome = (
+            asyncio.Event(),
+            asyncio.Event(),
+            [],
+        )
+        ws = LiveSocket(
+            streaming_handshake({"interrupts": {"toy.stop": ["toy.token"]}})
+        )
+        session_task = asyncio.create_task(streaming_server().run_session(ws))
+        assert (await ws.outbox.get())["type"] == "session_init"
+        ws.push(word("question"))
+        assert (await ws.outbox.get())["data"] == {"text": "first"}
+
+        ws.push(json.dumps({"topic": "toy.stop", "data": {"text": "stop"}}))
+        await Stream.ended.wait()
+        ws.push()
+        await session_task
+        return ws
+
+    ws = asyncio.run(asyncio.wait_for(scenario(), timeout=10))
+    assert Stream.outcome == ["cancelled"]
+    tokens = [m["data"]["text"] for m in ws.sent if m.get("topic") == "toy.token"]
+    assert tokens == ["first"]
+
+
+@pytest.mark.parametrize(
+    "event_policy, culprit",
+    [
+        ({"interrupts": {"acme.stopp": ["huri.token"]}}, "acme.stopp"),
+        ({"interupts": {"acme.stop": ["huri.token"]}}, "interupts"),
+    ],
+)
+def test_a_bad_event_policy_configuration_is_refused_at_the_handshake(
+    event_policy, culprit
+):
+    ws = session_on(streaming_server(), FakeSocket(streaming_handshake(event_policy)))
+    (reply,) = ws.sent
+    assert reply["type"] == "session_error"
+    assert culprit in reply["error"]
+    assert ws.closed == 1008
+
+
+def test_interrupt_rules_may_name_every_topic_of_the_session():
+    """Module inputs and outputs, and the client's sent and subscribed topics."""
+
+    rules = {"interrupts": {"toy.stop": ["toy.token", "toy.word"]}}
+    ws = session_on(streaming_server(), FakeSocket(streaming_handshake(rules)))
+    assert ws.sent[0]["type"] == "session_init"
+
+
+def test_interrupt_rules_may_name_a_topic_the_client_does_not_subscribe_to():
+    """Interrupting the LLM's tokens while the client only hears the TTS."""
+
+    rules = {"interrupts": {"toy.stop": ["toy.token"]}}
+    handshake_ = streaming_handshake(rules, subscribe=())
+    ws = session_on(streaming_server(), FakeSocket(handshake_))
+    assert ws.sent[0]["type"] == "session_init"
+
+
+def test_interrupt_rules_sent_to_a_concurrent_server_are_refused():
+    rules = {"interrupts": {"toy.stop": ["toy.token"]}}
+    ws = session_on(
+        streaming_server(EventPolicy), FakeSocket(streaming_handshake(rules))
+    )
+    (reply,) = ws.sent
+    assert reply["type"] == "session_error"
+    assert "interrupts" in reply["error"] and "EventPolicy" in reply["error"]
+
+
+def test_a_concurrent_server_accepts_a_session_without_rules():
+    ws = session_on(streaming_server(EventPolicy), FakeSocket(streaming_handshake({})))
+    assert ws.sent[0]["type"] == "session_init"

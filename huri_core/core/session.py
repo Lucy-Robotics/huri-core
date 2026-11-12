@@ -3,6 +3,7 @@ from typing import Collection, Hashable, List, Mapping, Optional
 from .bus import EventGraph
 from .dataclasses.config import LogConfig
 from .module import Module
+from .policy import EventPolicy
 
 
 class Session:
@@ -29,9 +30,16 @@ class Session:
         audited: Collection[type] = (),
         log: Optional[LogConfig] = None,
         module_ids: Optional[Mapping[int, Hashable]] = None,
+        policy: Optional[EventPolicy] = None,
     ) -> None:
         self.event_graph = EventGraph(
-            session_id, user_id, labels, audited, log=log, module_ids=module_ids
+            session_id,
+            user_id,
+            labels,
+            audited,
+            log=log,
+            module_ids=module_ids,
+            policy=policy,
         )
 
         for module in modules:

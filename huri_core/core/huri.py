@@ -12,6 +12,7 @@ import huri_core
 from huri_core.core.compat import check_session
 from huri_core.core.factory import EventData, EventDataFactory, Module, ModuleFactory
 from huri_core.core.plugins import installed_modules, module_label
+from huri_core.core.policy import EventPolicy, InterruptPolicy
 from huri_core.core.sender import Sender
 
 from .app import app
@@ -39,6 +40,7 @@ class HuRI:
         events: Dict[str, Type[EventData]],
         actuating: Iterable[str],
         distributions: Optional[Dict[str, Tuple[Optional[str], Optional[str]]]] = None,
+        event_policy: Type[EventPolicy] = InterruptPolicy,
     ) -> None:
         """:actuating: the enabled modules that may drive hardware, as the
         startup checks found them (class attribute or manifest, and opted in).
@@ -48,7 +50,10 @@ class HuRI:
         (HURI_ACTUATION_MODULES) is the safety gate, never this flag.
 
         :distributions: (distribution, version) of each module by name, from
-        the loader; absent or (None, None) for an import-path module."""
+        the loader; absent or (None, None) for an import-path module.
+
+        :event_policy: the EventPolicy class (HURI_EVENT_POLICY); each session
+        gets its own instance."""
         dists = {n: (distributions or {}).get(n, (None, None)) for n in modules}
         actuating = set(actuating)
         # A Serve replica's root logger has no handler and level WARNING: unless
@@ -74,6 +79,7 @@ class HuRI:
             event_cls = events.pop(module_cls.output_type, None)
             self.event_factory.register(module_cls.output_type, event_cls)
 
+        self.event_policy = event_policy
         self.clients: Dict[str, Session] = {}
 
         # shortcut: labels are keyed by class, so a class enabled under two
@@ -127,6 +133,28 @@ class HuRI:
         """
         return self.modules_info
 
+    def _session_policy(
+        self, client_config: ClientConfig, pipeline: List[Module]
+    ) -> EventPolicy:
+        """The session's event policy, built from the client's `event_policy`
+        settings and checked against the session's topics."""
+        settings = client_config.event_policy
+        try:
+            policy = self.event_policy(**settings)
+        except TypeError as e:
+            # The bare TypeError may not name the key ("takes no arguments").
+            raise ValueError(
+                f"event_policy {list(settings)} is not accepted by this "
+                f"server's {self.event_policy.__name__}: {e}"
+            ) from e
+        topics = {*client_config.send, *client_config.subscribe}
+        for module in pipeline:
+            topics.add(module.input_type)
+            if module.output_type is not None:
+                topics.add(module.output_type)
+        policy.check(topics)
+        return policy
+
     @app.websocket("/session")
     async def run_session(self, ws: WebSocket):
         """
@@ -173,6 +201,7 @@ class HuRI:
                 sent=client_config.send,
                 subscribed=topic_list,
             )
+            policy = self._session_policy(client_config, pipeline)
         except Exception as e:
             await ws.send_json(
                 {
@@ -203,6 +232,7 @@ class HuRI:
             self.audited,
             log=client_config.log,
             module_ids=module_ids,
+            policy=policy,
         )
         print(f"Client registered with _user_id={client_config.user_id}, \
 config: {client_config}")

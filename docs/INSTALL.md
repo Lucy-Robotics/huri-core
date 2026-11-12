@@ -271,6 +271,7 @@ them yourself only to override it, or when you write the config by hand.
 
 | Variable | Default | Effect |
 |---|---|---|
+| `HURI_EVENT_POLICY` | `interrupt` | the event policy class: `interrupt`, `concurrent` (no interrupt rules accepted), an entry point name from the `huri.event_policies` group, or an import path. An unknown name stops the server. See [Interruptions](../README.md#interruptions-the-event-policy) |
 | `HURI_MODULES` | unset: no module is enabled, every session is refused | comma-separated allow-list of the modules this server registers: entry point names (`stt,rag,tts`) or import paths (`my_pkg.servo:Servo`) |
 | `HURI_ACTUATION_MODULES` | unset | the modules allowed to move hardware. A module that declares actuation must be listed here as well as in `HURI_MODULES`. Any client that can reach `/session` can then use it: keep the server on a private network or behind an authenticating proxy |
 

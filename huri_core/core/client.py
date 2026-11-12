@@ -133,6 +133,9 @@ class HuRIClient:
         ({"modules": {id: "WARNING"}, "topics": {topic: "INFO"}}). Sent in the
         handshake for the server's logs; here, the sent/received lines the client
         writes at DEBUG on the ``huri.client`` logger skip the topics set above DEBUG.
+    :event_policy: this session's event policy settings, as in the YAML
+        `event_policy:` section ({"interrupts": {"acme.stop": ["huri.token"]}}).
+        The server checks them and refuses the session if they are wrong.
     :connect_kwargs: extra options for ``websockets.connect`` (e.g. ``ssl`` for
         a server with a private CA, ``additional_headers``). By default the
         message size limit is lifted (``max_size=None``): audio and motion
@@ -146,6 +149,7 @@ class HuRIClient:
         sends: Iterable[str] = (),
         user_id: Optional[str] = None,
         log: Optional[Mapping[str, Any]] = None,
+        event_policy: Optional[Mapping[str, Any]] = None,
         connect_kwargs: Optional[Mapping[str, Any]] = None,
     ):
         self.url = url
@@ -157,6 +161,10 @@ class HuRIClient:
         self.log = (
             LogConfig() if log is None else LogConfig.from_dict(log, self.modules)
         )
+        event_policy = {} if event_policy is None else event_policy
+        if not isinstance(event_policy, Mapping):
+            raise ValueError(f"`event_policy` must be a mapping, not {event_policy!r}")
+        self.event_policy = dict(event_policy)
         self._subs: Dict[str, _Subscription] = {}
         self._ws: Optional[websockets.ClientConnection] = None
         self._tasks: List[asyncio.Task] = []
@@ -177,6 +185,7 @@ class HuRIClient:
             sends=config.send,
             user_id=config.user_id,
             log=config.log.to_dict(),
+            event_policy=config.event_policy,
         )
 
     # --- configuration ----------------------------------------------------
@@ -231,6 +240,8 @@ class HuRIClient:
         }
         if log := self.log.to_dict():
             request["log"] = log
+        if self.event_policy:
+            request["event_policy"] = self.event_policy
         return request
 
     # --- connection ---------------------------------------------------------

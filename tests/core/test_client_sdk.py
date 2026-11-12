@@ -872,3 +872,40 @@ def test_a_broken_handshake_is_reported_as_an_error():
             detail="HuRISessionError: unexpected first message: {'type': 'bogus'}",
         )
     ]
+
+
+RULES = {"interrupts": {"acme.stop": ["huri.token"]}}
+
+
+def test_the_handshake_carries_the_event_policy(tmp_path):
+    section = "event_policy:\n  interrupts:\n    acme.stop: [huri.token]\n"
+    assert _handshake_of_yaml_client(tmp_path, section)["event_policy"] == RULES
+    client = HuRIClient("ws://127.0.0.1:1", modules={}, event_policy=RULES)
+    assert client.handshake()["event_policy"] == RULES
+
+
+def test_a_client_without_an_event_policy_sends_the_same_handshake_as_before(
+    tmp_path,
+):
+    assert "event_policy" not in _handshake_of_yaml_client(tmp_path)
+    assert "event_policy" not in HuRIClient("ws://x", modules={}).handshake()
+
+
+NOT_A_MAPPING = [["interrupts"], "interrupts", 1, False, [], "", 0]
+
+
+@pytest.mark.parametrize("event_policy", NOT_A_MAPPING)
+def test_an_event_policy_that_is_not_a_mapping_is_refused_by_the_config(
+    event_policy,
+):
+    raw = {"user_id": "u", "modules": {}, "event_policy": event_policy}
+    with pytest.raises(ValueError, match="event_policy"):
+        ClientConfig.from_dict(raw)
+
+
+@pytest.mark.parametrize("event_policy", NOT_A_MAPPING + [[["a", 1]]])
+def test_a_client_given_an_event_policy_that_is_not_a_mapping_fails_before_connecting(
+    event_policy,
+):
+    with pytest.raises(ValueError, match="event_policy"):
+        HuRIClient("ws://127.0.0.1:1", modules={}, event_policy=event_policy)
