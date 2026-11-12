@@ -408,9 +408,16 @@ async with client:
 
 Handlers of one topic run one at a time, in arrival order (audio playback
 needs that); different topics run concurrently; a failing handler is logged
-and does not stop the others. A refused session raises `HuRISessionError`
-(with `server_modules`). The same session can be written as a YAML file
-(`huri_url`, `modules`, `send`, `subscribe`), loaded with
+and does not stop the others. `client.on(..., concurrent=True)` opts a
+handler out of waiting: it starts on each event without waiting for its own
+earlier calls or for the topic's ordered handlers, and `close()` cancels the
+calls still running. On a topic that also has ordered handlers it sees each
+event when the ordered ones have finished the previous one. Use it for
+order-free work like logging or metrics.
+
+A refused session raises `HuRISessionError` (with `server_modules`). The same
+session can be written as a YAML file (`huri_url`, `modules`, `send`,
+`subscribe`), loaded with
 `load_client_config(path)` and turned into a client with
 `HuRIClient.from_config(...)`; `load_client_config` also gives the session
 this machine's `user_id`, created once and kept in the user config directory.

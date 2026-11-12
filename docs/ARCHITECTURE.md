@@ -178,6 +178,11 @@ never holds up text. If a handler raises, the error is logged and the next
 event still runs. Each topic's queue is unbounded, so nothing is dropped, but a
 handler slower than its stream keeps adding latency; keeping up is the use
 case's job.
+`on(..., concurrent=True)` opts a handler out of waiting: it starts on each
+event without waiting for its own earlier calls or for the topic's ordered
+handlers, and `close()` cancels the calls still running. On a topic that also
+has ordered handlers it sees each event when the ordered ones have finished the
+previous one. Use it for order-free work like logging or metrics.
 
 Heavy models run as Ray Serve deployments (`ModuleWithHandle`); module code
 imports their libraries lazily, so the head node can import every module to
