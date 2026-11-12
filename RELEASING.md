@@ -49,12 +49,24 @@ cut releases:
    (drop the `.devN` suffix) and summarizes the changes. On a minor release,
    it also turns the documented ranges (README's examples and Versioning
    section) from `>=0.X.0.dev0,<0.(X+1)` into `>=0.X,<0.(X+1)`.
-2. Merge it, then merge `dev` into `main` with a PR named `Release X.Y.Z`.
-3. Tag `main`'s merge commit `X.Y.Z` (no `v` prefix, like `0.2.0` and `0.3.0`)
-   and push the tag. Publish a GitHub release for it: its notes are the
-   changelog, and they say what breaks for modules on a minor release.
-   Then publish the same commit to PyPI (see [Publishing](#publishing)).
-4. On `dev`, bump `__version__` to the next `X.(Y+1).0.dev0`.
+2. Merge it, then open the PR from `dev` into `main` named `Release X.Y.Z`.
+   Its **Release** check (`.github/workflows/release.yml`) fails when the
+   release would be wrong: a pre-release version, or a version already tagged
+   or on PyPI. Its job summary says what merging will publish, and the sdist
+   and wheel pass `twine check --strict`.
+3. Merge it. The Release workflow then tags `main`'s merge commit `X.Y.Z` (no
+   `v` prefix, like `0.2.0` and `0.3.0`), publishes the GitHub release (notes
+   generated from the pull requests merged since the previous tag; edit them
+   afterwards, and say what breaks for modules on a minor release), and waits
+   for a maintainer to approve the `pypi` environment before uploading
+   huri-core to PyPI. It ends by installing `huri-core[server]==X.Y.Z` from
+   PyPI alone. A failed upload: "Re-run failed jobs" on that run; or, while
+   `main` is still at the release commit, run the Release workflow by hand on
+   `main`. Neither creates a second tag or release.
+4. The workflow also opens a PR into `dev` that sets `__version__` to the next
+   `X.(Y+1).0.dev0` (`chore: start X.(Y+1).0.dev0 after the X.Y.Z release`).
+   CI does not start on a PR opened by `GITHUB_TOKEN`: close and reopen it (or
+   push to it), then merge it.
 
 This repository was renamed from `Lucy-Robotics/HuRI` to
 `Lucy-Robotics/huri-core` at the split. The name `HuRI` is never reused, so
@@ -70,17 +82,37 @@ The earlier tags came with the history; the first release as `huri-core` is
 ## Publishing
 
 A release is a git tag **and** a PyPI upload of the tagged commit, so both
-always hold the same code. PyPI never accepts the same version twice: upload
-only once the tag is on `main` and CI is green.
+always hold the same code. PyPI never accepts the same version twice. The
+Release workflow does both from `main` (never from a pull request or another
+branch); `skip-existing` lets a failed upload be resumed.
+
+### Publishing setup (once)
+
+The workflow uploads with PyPI's trusted publishing: no token is stored.
+`huri-core` has, on pypi.org (Manage → Publishing), a GitHub publisher with
+owner `Lucy-Robotics`, repository `huri-core`, workflow `release.yml` and
+environment `pypi`. The repository's `pypi` environment requires a
+maintainer's approval and only accepts `main`: create and protect it before
+adding the publisher. If the repository moves to another GitHub owner, add
+the new publisher and remove the old one. The repository setting "Allow
+GitHub Actions to create and approve pull requests" must stay on for the
+next-version PR.
+
+### By hand, if the workflow cannot run
+
+From the tag:
 
 ```bash
 git switch --detach X.Y.Z && rm -rf dist
-python -m build && twine check dist/* && twine upload dist/*
+python -m build && twine check --strict dist/* && twine upload dist/*
 pip install "huri-core[server]==X.Y.Z"   # check it installs from PyPI
 ```
 
-Pre-releases (`X.Y.Z.devN`) may be uploaded to try packaging; pip installs
-them only with `--pre` or an exact pin. From git, any ref still works:
+then bump `__version__` on `dev` to `X.(Y+1).0.dev0`.
+
+Pre-releases (`X.Y.Z.devN`) may be uploaded by hand to try packaging; pip
+installs them only with `--pre` or an exact pin. From git, any ref still
+works:
 `pip install "huri-core[server] @ git+https://github.com/Lucy-Robotics/huri-core.git@X.Y.Z"`.
 
 ## huri-core and huri-modules

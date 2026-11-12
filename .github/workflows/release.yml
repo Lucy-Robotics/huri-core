@@ -1,0 +1,181 @@
+# Releases: merging the release PR into main is the only step.
+#
+# - On a pull request into main (the release PR), `plan` checks the release is
+#   consistent (scripts/release_plan.py) and builds and checks huri-core; the
+#   job summary says what merging will publish.
+# - On a push to main whose huri-core version is not tagged yet, `release` tags
+#   the merge commit and publishes the GitHub release, then `publish` uploads
+#   huri-core to PyPI once a maintainer approves the `pypi` environment. A push
+#   to main whose version is already tagged does nothing.
+# - `next-dev` then opens the PR on dev that starts the next .dev0 (it runs
+#   dev's copy of scripts/release_plan.py: dev always contains main).
+# - A failed upload: "Re-run failed jobs" on that run; or, while main is still
+#   at the release commit, run this workflow by hand on main. PyPI keeps what
+#   it has. Releases and uploads never run from a pull request or another ref.
+#
+# PyPI auth is trusted publishing (no token): huri-core has this repository,
+# this workflow file and the `pypi` environment as its publisher.
+name: Release
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: release plan and distributions
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      create: ${{ steps.plan.outputs.create }}
+      version: ${{ steps.plan.outputs.version }}
+      previous: ${{ steps.plan.outputs.previous }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the tags and the previous release, for the checks
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine "packaging>=23"
+      - id: plan
+        run: python scripts/release_plan.py
+      - run: python -m build --outdir dist .
+      - run: twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        if: steps.plan.outputs.release == 'true'
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    name: tag and GitHub release
+    needs: plan
+    # Never from a pull request or another branch, whatever the plan says.
+    if: >-
+      github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+      && needs.plan.outputs.release == 'true' && needs.plan.outputs.create == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: tag the merge commit and publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          PREVIOUS: ${{ needs.plan.outputs.previous }}
+        run: |
+          gh release create "$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --title "$VERSION" --latest \
+            --generate-notes ${PREVIOUS:+--notes-start-tag "$PREVIOUS"}
+
+  next-dev:
+    name: propose the next development version on dev
+    # Not gated on the upload: dev moves on once the release is tagged.
+    needs: [plan, release]
+    if: >-
+      github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "packaging>=23"
+      - name: open the PR that sets __version__ to the next .dev0
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          NEXT=$(python scripts/release_plan.py next-dev "$VERSION")
+          if [ -z "$NEXT" ]; then
+            echo "dev is already above $VERSION: nothing to propose."; exit 0
+          fi
+          BRANCH="chore/start-$NEXT"
+          TITLE="chore: start $NEXT after the $VERSION release"
+          # Decide on the PR, not the branch: a push whose `gh pr create` failed
+          # leaves a branch without a PR, and a re-run must open it.
+          if [ -n "$(gh pr list --head "$BRANCH" --state all --json number --jq '.[].number')" ]; then
+            echo "$BRANCH already has a PR: nothing to do."; exit 0
+          fi
+          if ! git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
+            sed -i "s/^__version__ = .*/__version__ = \"$NEXT\"/" huri_core/__init__.py
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git switch -c "$BRANCH"
+            git commit -am "$TITLE"
+            git push origin "$BRANCH"
+          fi
+          gh pr create --base dev --head "$BRANCH" --title "$TITLE" --body "$(printf '%s\n' \
+            "Sets \`__version__\` to \`$NEXT\` on dev, now that $VERSION is released." \
+            "" \
+            "CI does not start on a pull request opened by GITHUB_TOKEN: close and reopen this PR, or push to its branch, to run it.")"
+
+  publish:
+    name: upload to PyPI
+    needs: [plan, release]
+    # `release` is skipped when resuming (create == false): run anyway then,
+    # but never after a failed plan (build, twine check) or a failed release.
+    if: >-
+      !cancelled() && needs.plan.result == 'success'
+      && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+      && needs.plan.outputs.release == 'true'
+      && (needs.release.result == 'success' || needs.plan.outputs.create == 'false')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/huri-core/${{ needs.plan.outputs.version }}/
+    permissions:
+      id-token: write  # trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      # skip-existing: a resumed upload keeps the files PyPI already has.
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+
+  check:
+    name: installs from PyPI
+    needs: [plan, publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: pip install huri-core[server] at the released version, from PyPI alone
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          # PyPI's index can take a minute to show a new upload.
+          for i in 1 2 3 4 5 6; do
+            pip install --no-cache-dir "huri-core[server]==$VERSION" && break
+            [ "$i" -lt 6 ] && sleep 30
+          done
+          python - <<'PY'
+          import importlib.metadata as m, os
+          import fastapi, huri_core, ray  # noqa: F401  the [server] extra is there
+          v = os.environ["VERSION"]
+          assert m.version("huri-core") == v, m.version("huri-core")
+          assert huri_core.__version__ == v, huri_core.__version__
+          PY
