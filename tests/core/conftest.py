@@ -11,6 +11,7 @@ import pytest
 SERVER_TESTS = [
     "test_plugins.py",
     "test_provenance.py",
+    "test_public_api.py",  # huri_core.app, in the record, imports Ray
     "test_server_session.py",
     "test_topic_wiring.py",
 ]

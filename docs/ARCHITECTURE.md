@@ -259,7 +259,11 @@ installer (not the images) also installs `huri-cli` from `HURI_CLI_REF`, or
 - **huri-core**: semver, tags `X.Y.Z` (no `v`), `dev` → `main`, the version in
   `huri_core/__init__.py`. While `0.x`, a minor bump may break the public
   surface (base classes, client SDK and config schema, wire protocol, entry
-  point groups and manifest); a patch must not.
+  point groups and manifest); a patch must not. That surface, name by name,
+  is recorded in `tests/core/public_api.txt`: a change to it fails CI until
+  the record is regenerated (`python -m tests.core.test_public_api`), so the
+  pull request shows it. The server's internals (`bus`, `session`, `factory`,
+  `sender`, `huri`) are not part of it.
 - **huri-modules**: its own semver and tags, same branches. A release is a
   tested set: every package (each with its own version in its
   `pyproject.toml`) and the one `huri-core` ref, `HURI_CORE_REF` in

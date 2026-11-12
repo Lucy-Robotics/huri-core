@@ -1,0 +1,157 @@
+# huri-core's public surface; regenerate with: python -m tests.core.test_public_api
+class huri_core.core.events.EventData(Generic[~WireT])
+huri_core.core.events.EventData: dataclass() -> None
+def huri_core.core.events.EventData.from_wire(data: ~WireT) -> 'EventData[WireT]'  [classmethod]
+def huri_core.core.events.EventData.to_wire(self) -> ~WireT
+def huri_core.core.events.EventData.summarize(self) -> str
+class huri_core.core.events.JsonEvent(huri_core.core.events.EventData[typing.Mapping[str, typing.Any]])
+huri_core.core.events.JsonEvent: dataclass() -> None
+def huri_core.core.events.JsonEvent.from_wire(data: Mapping[str, Any]) -> 'JsonEvent'  [classmethod]
+def huri_core.core.events.JsonEvent.to_wire(self) -> Mapping[str, Any]
+class huri_core.core.events.BytesEvent(huri_core.core.events.EventData[bytes])
+huri_core.core.events.BytesEvent: dataclass(data: bytes) -> None
+huri_core.core.events.BytesEvent.data: bytes
+def huri_core.core.events.BytesEvent.from_wire(data: bytes) -> 'BytesEvent'  [classmethod]
+def huri_core.core.events.BytesEvent.to_wire(self) -> bytes
+def huri_core.core.events.BytesEvent.summarize(self) -> str
+class huri_core.core.module.Module(object)
+huri_core.core.module.Module.input_type: str
+huri_core.core.module.Module.output_type: Optional[str]
+huri_core.core.module.Module.input_event: Optional[Type[huri_core.core.events.EventData]]
+huri_core.core.module.Module.output_event: Optional[Type[huri_core.core.events.EventData]]
+huri_core.core.module.Module.actuation: bool
+huri_core.core.module.Module.input_event = None
+huri_core.core.module.Module.output_event = None
+huri_core.core.module.Module.actuation = False
+def huri_core.core.module.Module.process(self, _) -> Union[Coroutine[Any, Any, huri_core.core.events.EventData | None], AsyncGenerator[huri_core.core.events.EventData | None, NoneType]]
+class huri_core.core.module.ModuleWithHandle(huri_core.core.module.Module)
+def huri_core.core.module.ModuleWithHandle.__init__(self, _handle: 'handle.DeploymentHandle', **kwargs)
+class huri_core.core.module.ModuleWithId(huri_core.core.module.Module)
+def huri_core.core.module.ModuleWithId.__init__(self, _user_id: str, **kwargs)
+def huri_core.core.module.ModuleWithId.get_user_context(self) -> dict
+class huri_core.core.dataclasses.config.ModuleConfig(object)
+huri_core.core.dataclasses.config.ModuleConfig: dataclass(name: Optional[str], args: Mapping[str, Any], module: Optional[str] = None) -> None
+huri_core.core.dataclasses.config.ModuleConfig.name: Optional[str]
+huri_core.core.dataclasses.config.ModuleConfig.args: Mapping[str, Any]
+huri_core.core.dataclasses.config.ModuleConfig.module: Optional[str]
+huri_core.core.dataclasses.config.ModuleConfig.module = None
+huri_core.core.dataclasses.config.ModuleConfig.key  [property]
+def huri_core.core.dataclasses.config.ModuleConfig.from_dict(raw: dict) -> 'ModuleConfig'  [classmethod]
+def huri_core.core.dataclasses.config.ModuleConfig.to_dict(self) -> Dict[str, Any]
+class huri_core.core.dataclasses.config.ClientConfig(object)
+huri_core.core.dataclasses.config.ClientConfig: dataclass(user_id: str, modules: Dict[str, huri_core.core.dataclasses.config.ModuleConfig], subscribe: List[str], send: List[str], huri_url: str = '', log: huri_core.core.dataclasses.config.LogConfig = <factory>, event_policy: Dict[str, Any] = <factory>) -> None
+huri_core.core.dataclasses.config.ClientConfig.user_id: str
+huri_core.core.dataclasses.config.ClientConfig.modules: Dict[str, huri_core.core.dataclasses.config.ModuleConfig]
+huri_core.core.dataclasses.config.ClientConfig.subscribe: List[str]
+huri_core.core.dataclasses.config.ClientConfig.send: List[str]
+huri_core.core.dataclasses.config.ClientConfig.huri_url: str
+huri_core.core.dataclasses.config.ClientConfig.log: huri_core.core.dataclasses.config.LogConfig
+huri_core.core.dataclasses.config.ClientConfig.event_policy: Dict[str, Any]
+huri_core.core.dataclasses.config.ClientConfig.huri_url = ''
+huri_core.core.dataclasses.config.ClientConfig.LEGACY_KEYS = ('interface_path', 'senders', 'hooks')
+def huri_core.core.dataclasses.config.ClientConfig.from_dict(raw: Dict) -> 'ClientConfig'  [classmethod]
+class huri_core.core.dataclasses.config.LogConfig(object)
+huri_core.core.dataclasses.config.LogConfig: dataclass(modules: Dict[Hashable, int] = <factory>, topics: Dict[str, int] = <factory>) -> None
+huri_core.core.dataclasses.config.LogConfig.modules: Dict[Hashable, int]
+huri_core.core.dataclasses.config.LogConfig.topics: Dict[str, int]
+def huri_core.core.dataclasses.config.LogConfig.from_dict(raw: Mapping[str, Any], module_ids: Iterable[Hashable]) -> 'LogConfig'  [classmethod]
+def huri_core.core.dataclasses.config.LogConfig.to_dict(self) -> Dict[str, Dict[Hashable, str]]
+def huri_core.core.dataclasses.config.LogConfig.allows(self, level: int, topic: str, module_id: Optional[Hashable] = None) -> bool
+class huri_core.core.client.HuRIClient(object)
+def huri_core.core.client.HuRIClient.__init__(self, url: str, modules: Mapping[str, Mapping[str, Any]], sends: Iterable[str] = (), user_id: Optional[str] = None, log: Optional[Mapping[str, Any]] = None, event_policy: Optional[Mapping[str, Any]] = None, connect_kwargs: Optional[Mapping[str, Any]] = None)
+def huri_core.core.client.HuRIClient.from_config(config: huri_core.core.dataclasses.config.ClientConfig) -> 'HuRIClient'  [classmethod]
+def huri_core.core.client.HuRIClient.on(self, topic: str, event_cls: Type[~E], handler: Callable[[~E], Awaitable[NoneType]], *, concurrent: bool = False) -> None
+def huri_core.core.client.HuRIClient.on_connection(self, handler: Callable[[huri_core.core.client.ConnectionMessage], Awaitable[NoneType]]) -> None
+def huri_core.core.client.HuRIClient.handshake(self) -> Dict[str, Any]
+async def huri_core.core.client.HuRIClient.connect(self) -> 'HuRIClient'
+async def huri_core.core.client.HuRIClient.close(self) -> None
+async def huri_core.core.client.HuRIClient.wait_closed(self) -> None
+async def huri_core.core.client.HuRIClient.send(self, topic: str, event: huri_core.core.events.EventData) -> None
+class huri_core.core.client.HuRISessionError(RuntimeError)
+def huri_core.core.client.HuRISessionError.__init__(self, error: str, server_modules: Optional[List[str]] = None)
+class huri_core.core.client.ConnectionMessage(object)
+huri_core.core.client.ConnectionMessage: dataclass(status: Literal['connected', 'refused', 'error', 'closed'], detail: str = '', code: Optional[int] = None, server_modules: List[str] = <factory>) -> None
+huri_core.core.client.ConnectionMessage.status: Literal['connected', 'refused', 'error', 'closed']
+huri_core.core.client.ConnectionMessage.detail: str
+huri_core.core.client.ConnectionMessage.code: Optional[int]
+huri_core.core.client.ConnectionMessage.server_modules: List[str]
+huri_core.core.client.ConnectionMessage.detail = ''
+huri_core.core.client.ConnectionMessage.code = None
+def huri_core.core.client.load_raw_client_config(path: str) -> Dict[str, Any]
+def huri_core.core.client.load_client_config(path: str) -> huri_core.core.dataclasses.config.ClientConfig
+def huri_core.core.client.encode(topic: str, event: huri_core.core.events.EventData) -> str | bytes
+def huri_core.core.client.decode(message: str | bytes) -> tuple[str, typing.Any]
+class huri_core.testing.Call(object)
+huri_core.testing.Call: dataclass(method: str, args: Tuple[Any, ...], kwargs: Dict[str, Any] = <factory>) -> None
+huri_core.testing.Call.method: str
+huri_core.testing.Call.args: Tuple[Any, ...]
+huri_core.testing.Call.kwargs: Dict[str, Any]
+class huri_core.testing.LocalHandle(object)
+def huri_core.testing.LocalHandle.__init__(self, target: Any, *, streaming: bool = False, _calls=None)
+def huri_core.testing.LocalHandle.options(self, *, stream: bool = False, **_ignored: Any) -> 'LocalHandle'
+class huri_core.testing.ModuleHarness(object)
+def huri_core.testing.ModuleHarness.__init__(self, module: Union[Type[huri_core.core.module.Module], huri_core.core.module.Module], *, handle: Any = None, user_id: str = 'test-user', **args: Any)
+async def huri_core.testing.ModuleHarness.feed(self, event: huri_core.core.events.EventData) -> List[huri_core.core.events.EventData]
+async def huri_core.testing.ModuleHarness.feed_all(self, *events: huri_core.core.events.EventData) -> List[huri_core.core.events.EventData]
+async def huri_core.testing.ModuleHarness.finalize(self) -> None
+def huri_core.testing.ModuleHarness.run(self, *events: huri_core.core.events.EventData) -> List[huri_core.core.events.EventData]
+huri_core.core.manifest.MANIFEST_FILE = 'huri_module.toml'
+class huri_core.core.manifest.ManifestError(ValueError)
+def huri_core.core.manifest.ManifestError.__init__(self, source: str, problems: List[str])
+class huri_core.core.manifest.Port(object)
+huri_core.core.manifest.Port: dataclass(topic: str, event: str) -> None
+huri_core.core.manifest.Port.topic: str
+huri_core.core.manifest.Port.event: str
+class huri_core.core.manifest.ModuleManifest(object)
+huri_core.core.manifest.ModuleManifest: dataclass(name: str, summary: str, input: huri_core.core.manifest.Port, huri_core: str, output: Optional[huri_core.core.manifest.Port] = None, events: List[str] = <factory>, gpu: bool = False, actuation: bool = False, source: str = '<manifest>') -> None
+huri_core.core.manifest.ModuleManifest.name: str
+huri_core.core.manifest.ModuleManifest.summary: str
+huri_core.core.manifest.ModuleManifest.input: huri_core.core.manifest.Port
+huri_core.core.manifest.ModuleManifest.huri_core: str
+huri_core.core.manifest.ModuleManifest.output: Optional[huri_core.core.manifest.Port]
+huri_core.core.manifest.ModuleManifest.events: List[str]
+huri_core.core.manifest.ModuleManifest.gpu: bool
+huri_core.core.manifest.ModuleManifest.actuation: bool
+huri_core.core.manifest.ModuleManifest.source: str
+huri_core.core.manifest.ModuleManifest.output = None
+huri_core.core.manifest.ModuleManifest.gpu = False
+huri_core.core.manifest.ModuleManifest.actuation = False
+huri_core.core.manifest.ModuleManifest.source = '<manifest>'
+def huri_core.core.manifest.loads_toml(text: str) -> Dict[str, Any]
+def huri_core.core.manifest.loads_manifest(text: str, source: str = '<manifest>') -> huri_core.core.manifest.ModuleManifest
+def huri_core.core.manifest.load_manifest(path: pathlib.Path) -> huri_core.core.manifest.ModuleManifest
+huri_core.core.plugins.MODULES_GROUP = 'huri.modules'
+huri_core.core.plugins.EVENTS_GROUP = 'huri.events'
+huri_core.core.plugins.CURATED_NAMESPACE = 'huri'
+class huri_core.core.plugins.PluginError(RuntimeError)
+def huri_core.core.plugins.topic_namespace(topic: str) -> str
+def huri_core.core.plugins.parse_selection(selection: Optional[str]) -> List[str]
+def huri_core.core.plugins.installed_modules() -> List[str]
+def huri_core.core.plugins.load_modules(selection: Optional[Iterable[str]] = None) -> Dict[str, Type[huri_core.core.module.Module]]
+def huri_core.core.plugins.load_events() -> Dict[str, Type[huri_core.core.events.EventData]]
+def huri_core.core.plugins.find_manifest(name: str) -> Optional[huri_core.core.manifest.ModuleManifest]
+huri_core.core.plugins.EVENT_POLICIES_GROUP = 'huri.event_policies'
+def huri_core.core.plugins.installed_event_policies() -> List[str]
+def huri_core.core.plugins.load_event_policy(name: Optional[str]) -> Type[huri_core.core.policy.EventPolicy]
+class huri_core.core.policy.EventPolicy(object)
+async def huri_core.core.policy.EventPolicy.publish(self, graph: 'EventGraph', topic: str, data) -> None
+def huri_core.core.policy.EventPolicy.check(self, topics: Collection[str]) -> None
+class huri_core.core.policy.InterruptPolicy(huri_core.core.policy.EventPolicy)
+def huri_core.core.policy.InterruptPolicy.__init__(self, interrupts: Optional[Mapping[str, Sequence[str]]] = None)
+def huri_core.core.policy.InterruptPolicy.check(self, topics: Collection[str]) -> None
+async def huri_core.core.policy.InterruptPolicy.publish(self, graph: 'EventGraph', topic: str, data) -> None
+class huri_core.core.bus.EventGraph(object)
+def huri_core.core.bus.EventGraph.__init__(self, session_id: str = '-', user_id: str = '-', labels: Optional[Mapping[type, str]] = None, audited: Collection[type] = (), log: Optional[huri_core.core.dataclasses.config.LogConfig] = None, module_ids: Optional[Mapping[int, Hashable]] = None, policy: Optional[huri_core.core.policy.EventPolicy] = None) -> None
+def huri_core.core.bus.EventGraph.register(self, module: huri_core.core.module.Module)
+async def huri_core.core.bus.EventGraph.publish(self, event_topic, data)
+def huri_core.core.bus.EventGraph.dispatch(self, topic, data)
+def huri_core.core.bus.EventGraph.cancel(self, topics) -> int
+class huri_core.core.compat.CompatibilityError(ValueError)
+def huri_core.core.compat.CompatibilityError.__init__(self, problems: List[str])
+def huri_core.core.compat.check_modules(modules: Dict[str, Type[huri_core.core.module.Module]], events: Dict[str, Type[huri_core.core.events.EventData]]) -> None
+def huri_core.core.compat.check_manifests(modules: Dict[str, Type[huri_core.core.module.Module]], manifests: Dict[str, huri_core.core.manifest.ModuleManifest], events: Dict[str, Type[huri_core.core.events.EventData]], installed_version: Callable[[str], Optional[str]] = <function _installed_version>) -> None
+def huri_core.core.compat.check_actuation(modules: Dict[str, Type[huri_core.core.module.Module]], manifests: Dict[str, huri_core.core.manifest.ModuleManifest], opted_in: Iterable[str]) -> List[str]
+def huri_core.core.compat.check_session(pipeline: List[huri_core.core.module.Module], sent: Iterable[str], subscribed: Iterable[str]) -> None
+huri_core.cli.COMMANDS_GROUP = 'huri.commands'
+def huri_core.cli.main(argv: Optional[List[str]] = None) -> int
+def huri_core.app.build_app() -> ray.serve.deployment.Application
