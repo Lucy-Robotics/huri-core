@@ -121,7 +121,7 @@ def test_the_release_pr_shows_what_merging_it_will_publish(repo, monkeypatch):
     assert code == 0 and out["release"] == "false"
     assert (out["version"], out["previous"]) == ("0.5.0", "0.4.1")
     assert "| tag `0.5.0` on main's merge commit | create |" in summary
-    assert "| GitHub release `0.5.0` | publish, marked latest |" in summary
+    assert "| GitHub release `0.5.0` | publish |" in summary
     assert "| PyPI `huri-core 0.5.0` | upload |" in summary
 
 
