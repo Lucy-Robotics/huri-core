@@ -262,7 +262,7 @@ installer (not the images) also installs `huri-cli` from `HURI_CLI_REF`, or
   point groups and manifest); a patch must not. That surface, name by name,
   is recorded in `tests/core/public_api.txt`: a change to it fails CI until
   the record is regenerated (`python -m tests.core.test_public_api`), so the
-  pull request shows it. The server's internals (`bus`, `session`, `factory`,
+  pull request shows it. The server's internals (`session`, `factory`,
   `sender`, `huri`) are not part of it.
 - **huri-modules**: its own semver and tags, same branches. A release is a
   tested set: every package (each with its own version in its

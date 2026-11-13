@@ -115,8 +115,9 @@ def imports(module: str, source: str) -> Iterator[str]:
 
     def walk(nodes: Iterable[ast.AST]) -> Iterator[str]:
         for node in nodes:
-            if isinstance(node, ast.If) and ast.unparse(node.test).endswith(
-                "TYPE_CHECKING"
+            if isinstance(node, ast.If) and ast.unparse(node.test) in (
+                "TYPE_CHECKING",
+                "typing.TYPE_CHECKING",
             ):
                 yield from walk(node.orelse)
                 continue
@@ -147,8 +148,30 @@ def boundary_violations(module: str, source: Optional[str] = None) -> Set[str]:
     }
 
 
+def client_side_files() -> Set[str]:
+    """CLIENT_IMPORTS and every huri_core module they import, at any depth, so
+    a new file imported by a client-side one is checked without being listed."""
+    found: Set[str] = set()
+    todo = list(CLIENT_IMPORTS)
+    while todo:
+        module = todo.pop()
+        if module in found or not source_path(module).is_file():
+            continue
+        found.add(module)
+        todo += [
+            name
+            for name in imports(module, source_path(module).read_text())
+            if name.startswith("huri_core.") and name not in SERVER_STACK
+        ]
+    return found
+
+
+def test_a_file_imported_by_a_client_side_file_is_checked_too():
+    assert "huri_core.core.policy" in client_side_files()  # via bus and session
+
+
 def test_the_current_tree_passes_the_client_import_boundary():
-    found = set().union(*(boundary_violations(m) for m in CLIENT_IMPORTS))
+    found = set().union(*(boundary_violations(m) for m in client_side_files()))
     assert not found, sorted(found)
 
 
@@ -156,6 +179,7 @@ def test_the_current_tree_passes_the_client_import_boundary():
     "module,target,source",
     [
         ("huri_core.core.client", "ray", "def f():\n    import ray\n"),
+        ("huri_core.core.client", "ray", "if not TYPE_CHECKING:\n    import ray\n"),
         (
             "huri_core.core.bus",
             "huri_core.core.huri",
