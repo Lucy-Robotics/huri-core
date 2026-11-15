@@ -140,6 +140,67 @@ def test_a_frame_on_an_unknown_topic_is_dropped_not_fatal():
     assert ws.sent[-1] == {"topic": "toy.loud", "data": {"text": "STILL HERE"}}
 
 
+@pytest.mark.parametrize(
+    "bad_frame",
+    [
+        json.dumps({"type": "status"}),
+        json.dumps({"topic": "toy.word"}),
+        json.dumps([1]),
+        "not json",
+        b"\x00",
+        b"\x00\x02\xff\xfe",
+        json.dumps({"topic": "toy.word", "data": {"wrong": 1}}),
+    ],
+)
+def test_a_malformed_frame_is_dropped_not_fatal(bad_frame, serve_log):
+    ws = session(
+        FakeSocket(
+            handshake({"a": {"name": "upper"}}, ["toy.loud"], ["toy.word"]),
+            bad_frame,
+            json.dumps({"topic": "toy.word", "data": {"text": "still here"}}),
+        )
+    )
+    assert ws.sent[-1] == {"topic": "toy.loud", "data": {"text": "STILL HERE"}}
+    warnings = [r for r in serve_log.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "client u1" in warnings[0].message
+    assert "malformed frame" in warnings[0].message
+
+
+def test_publish_failures_are_not_treated_as_malformed_frames(monkeypatch):
+    async def fail_publish(self, topic, event_data):
+        raise ValueError("publish failed")
+
+    monkeypatch.setattr("huri_core.core.session.Session.publish", fail_publish)
+    with pytest.raises(ValueError, match="publish failed"):
+        session(
+            FakeSocket(
+                handshake({"a": {"name": "upper"}}, ["toy.loud"], ["toy.word"]),
+                json.dumps({"topic": "toy.word", "data": {"text": "hi"}}),
+            )
+        )
+
+
+def test_good_frames_do_not_warn_and_disconnect_finalizes_modules(serve_log):
+    finalized = []
+
+    class FinalizingUpper(Upper):
+        async def finalize(self):
+            finalized.append(True)
+
+    ws = session(
+        FakeSocket(
+            handshake({"a": {"name": "upper"}}, ["toy.loud"], ["toy.word"]),
+            json.dumps({"topic": "toy.word", "data": {"text": "hi"}}),
+        ),
+        modules={"upper": FinalizingUpper},
+    )
+    assert ws.sent[-1] == {"topic": "toy.loud", "data": {"text": "HI"}}
+    assert not [r for r in serve_log.records if r.levelno == logging.WARNING]
+    assert "Client u1 disconnected" in logged(serve_log)
+    assert finalized == [True]
+
+
 def test_an_unknown_module_is_rejected_with_the_servers_modules():
     ws = session(FakeSocket(handshake({"a": {"name": "stt"}}, [], ["toy.word"])))
     (reply,) = ws.sent

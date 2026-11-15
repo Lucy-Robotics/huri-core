@@ -276,7 +276,9 @@ event published on a topic runs every module subscribed to it, concurrently,
 and what they emit is published in turn. For each subscribed topic a `Sender`
 forwards the events to the client, framed as above. An incoming frame on a
 topic none of the server's enabled modules uses is dropped and logged; the
-session goes on.
+session goes on. A malformed JSON or binary frame, or event data that does
+not fit its topic, is also dropped with a warning naming the client; later
+frames are still processed.
 
 `log` sets the session's traffic log levels, per module id (a key of
 `modules`) and per topic, as `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`

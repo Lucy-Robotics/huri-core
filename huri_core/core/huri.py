@@ -250,20 +250,27 @@ class HuRI:
                     if msg["type"] == "websocket.disconnect":
                         raise WebSocketDisconnect()
 
-                    if "bytes" in msg:
-                        msg_bytes = msg["bytes"]
-                        topic_len = struct.unpack("!H", msg_bytes[:2])[0]
-
-                        topic = msg_bytes[2 : 2 + topic_len].decode()
-                        data = msg_bytes[2 + topic_len :]
-                    else:
-                        msg_text = msg["text"]
-                        event = json.loads(msg_text)
-                        topic = event["topic"]
-                        data = event["data"]  # TODO client/server one function
-
                     try:
+                        if "bytes" in msg:
+                            msg_bytes = msg["bytes"]
+                            topic_len = struct.unpack("!H", msg_bytes[:2])[0]
+
+                            topic = msg_bytes[2 : 2 + topic_len].decode()
+                            data = msg_bytes[2 + topic_len :]
+                        else:
+                            msg_text = msg["text"]
+                            event = json.loads(msg_text)
+                            topic = event["topic"]
+                            data = event["data"]  # TODO client/server one function
+
                         event_data = self.event_factory.create(topic, data)
+                    except (KeyError, TypeError, ValueError, struct.error) as e:
+                        logger.warning(
+                            "[HuRI] client %s: dropping malformed frame: %s",
+                            client_config.user_id,
+                            e,
+                        )
+                        continue
                     except RuntimeError as e:
                         logger.warning(
                             "[HuRI] client %s: dropping frame on topic %r: %s. "
