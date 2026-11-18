@@ -141,7 +141,7 @@ def huri_core.core.policy.InterruptPolicy.__init__(self, interrupts: Optional[Ma
 def huri_core.core.policy.InterruptPolicy.check(self, topics: Collection[str]) -> None
 async def huri_core.core.policy.InterruptPolicy.publish(self, graph: 'EventGraph', topic: str, data) -> None
 class huri_core.core.bus.EventGraph(object)
-def huri_core.core.bus.EventGraph.__init__(self, session_id: str = '-', user_id: str = '-', labels: Optional[Mapping[type, str]] = None, audited: Collection[type] = (), log: Optional[huri_core.core.dataclasses.config.LogConfig] = None, module_ids: Optional[Mapping[int, Hashable]] = None, policy: Optional[huri_core.core.policy.EventPolicy] = None) -> None
+def huri_core.core.bus.EventGraph.__init__(self, session_id: str = '-', user_id: str = '-', labels: Optional[Mapping[type, str]] = None, audited: Collection[type] = (), log: Optional[huri_core.core.dataclasses.config.LogConfig] = None, module_ids: Optional[Mapping[int, Hashable]] = None, policy: Optional[huri_core.core.policy.EventPolicy] = None, latest_only: Collection[str] = ()) -> None
 def huri_core.core.bus.EventGraph.register(self, module: huri_core.core.module.Module)
 async def huri_core.core.bus.EventGraph.publish(self, event_topic, data)
 def huri_core.core.bus.EventGraph.dispatch(self, topic, data)

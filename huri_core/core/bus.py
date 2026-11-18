@@ -50,6 +50,8 @@ class EventGraph:
     :policy:
         Decides how each published event is dispatched (EventPolicy() by
         default: every subscriber at once).
+    :latest_only:
+        Topics whose subscribers only get the newest value while busy.
     """
 
     def __init__(
@@ -61,12 +63,19 @@ class EventGraph:
         log: Optional[LogConfig] = None,
         module_ids: Optional[Mapping[int, Hashable]] = None,
         policy: Optional[EventPolicy] = None,
+        latest_only: Collection[str] = (),
     ) -> None:
+        self._latest_only = frozenset(latest_only)
         self._log = log or LogConfig()
         self._module_ids = module_ids or {}  # id(module) -> its id in the session
         self.subscribers: defaultdict[str, list[Module]] = defaultdict(list)
         self._policy = policy if policy is not None else EventPolicy()
         self._runs: dict[asyncio.Task, _Run] = {}
+        # Latest-only slots, keyed (id(module), topic): id, as modules may define __eq__
+        # shortcut: one module object registered twice on a topic shares one slot,
+        # key on the registration instead if a pipeline ever registers a module twice
+        self._busy: set[tuple[int, str]] = set()
+        self._pending: dict[tuple[int, str], tuple[Module, Any, _Run | None]] = {}
         self._session_id = session_id
         self._user_id = user_id
         self._labels = labels or {}
@@ -96,27 +105,54 @@ class EventGraph:
         """Start every subscriber of `topic`, as children of the current run."""
         current = asyncio.current_task()
         parent = self._runs.get(current) if current else None
+        if topic in self._latest_only:
+            for module in self.subscribers[topic]:
+                self._dispatch_latest(module, topic, data, parent)
+            return
         for module in self.subscribers[topic]:
-            task = asyncio.create_task(self._run(module, data))
-            # shortcut: the lineage chain grows one node per hop if a pipeline loops
-            # on its own topics (and a rule then reaches every earlier producer's
-            # descendants), add a depth bound when a looping pipeline exists
-            self._runs[task] = _Run(module, parent)
-            task.add_done_callback(self._forget)
+            self._start(module, data, parent)
+
+    def _start(self, module: Module, data, parent: "_Run | None") -> asyncio.Task:
+        task = asyncio.create_task(self._run(module, data))
+        # shortcut: the lineage chain grows one node per hop if a pipeline loops
+        # on its own topics (and a rule then reaches every earlier producer's
+        # descendants), add a depth bound when a looping pipeline exists
+        self._runs[task] = _Run(module, parent)
+        task.add_done_callback(self._forget)
+        return task
+
+    def _dispatch_latest(self, module: Module, topic: str, data, parent: "_Run | None"):
+        """Start `module` on `data`, or, while it is busy on `topic`, keep
+        `data` as the one value it gets next (replacing an older one)."""
+        key = (id(module), topic)
+        if key in self._busy:
+            self._pending[key] = (module, data, parent)
+            return
+        task = self._start(module, data, parent)
+        self._busy.add(key)
+        task.add_done_callback(lambda _: self._next_latest(key, topic))
+
+    def _next_latest(self, key: tuple[int, str], topic: str):
+        self._busy.discard(key)
+        if key in self._pending:
+            module, data, parent = self._pending.pop(key)
+            self._dispatch_latest(module, topic, data, parent)
 
     def cancel(self, topics) -> int:
         """
         Cancel every running task that produces one of `topics`, or that such
-        a task started, except the current task. Returns how many.
+        a task started, except the current task. Returns how many. Also drops
+        the waiting latest-only values whose run would be cancelled that way
+        (not counted).
         """
         current = asyncio.current_task()
         cancelled = 0
         for task, run in self._runs.items():
-            node: _Run | None = run
-            while node is not None and node.module.output_type not in topics:
-                node = node.parent
-            if node is not None and task is not current and task.cancel():
+            if _produces(run, topics) and task is not current and task.cancel():
                 cancelled += 1
+        for key, (module, _, parent) in list(self._pending.items()):
+            if _produces(_Run(module, parent), topics):
+                del self._pending[key]
         return cancelled
 
     def _forget(self, task: asyncio.Task):
@@ -210,6 +246,13 @@ class EventGraph:
                 self._session_id,
                 label,
             )
+
+
+def _produces(run: "_Run | None", topics) -> bool:
+    """Whether `run`, or a run up its lineage, produces one of `topics`."""
+    while run is not None and run.module.output_type not in topics:
+        run = run.parent
+    return run is not None
 
 
 class _Run:
