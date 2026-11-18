@@ -682,6 +682,8 @@ of `huri-core[client]` and release on their own.
 make lint     # black, isort, flake8 (rewrite in place) + mypy + link check
 make test     # pytest
 make check    # both
+make bench    # benchmarks of the hot paths (not part of `make test`)
+make bench-compare  # the same against origin/dev (BASE=...); fails on a mean more than 25% slower
 ```
 
 CI (`.github/workflows/ci.yml`) runs the lint and the link check, the tests

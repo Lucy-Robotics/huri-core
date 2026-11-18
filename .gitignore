@@ -224,3 +224,4 @@ terraform.rc
 # Local environments
 /.venv*/
 /uv.lock
+.benchmarks/
