@@ -181,7 +181,7 @@ And local websites, on the machine that runs the server:
 |---|---|
 | <http://127.0.0.1:8265> | Ray's dashboard: deployments, replicas, logs, CPU and memory |
 | <http://127.0.0.1:8000/docs> | the server's HTTP API, to read and try |
-| <http://127.0.0.1:8000/modules> | the modules this server enabled, with their input and output topics (JSON) |
+| <http://127.0.0.1:8000/modules> | the modules this server enabled, with their input and output topics and their arguments (JSON) |
 | <http://127.0.0.1:8000/-/healthz> | Ray's HTTP proxy only: it answers `success` even when every deployment is dead, so trust `serve status` instead |
 
 The pipeline of path 1 adds:

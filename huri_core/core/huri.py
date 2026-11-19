@@ -1,3 +1,4 @@
+import inspect
 import json
 import logging
 import struct
@@ -11,6 +12,7 @@ from ray.serve import handle
 import huri_core
 from huri_core.core.compat import check_session
 from huri_core.core.factory import EventData, EventDataFactory, Module, ModuleFactory
+from huri_core.core.module import ModuleWithHandle, ModuleWithId
 from huri_core.core.plugins import installed_modules, module_label
 from huri_core.core.policy import EventPolicy, InterruptPolicy
 from huri_core.core.sender import Sender
@@ -20,6 +22,52 @@ from .dataclasses.config import ClientConfig
 from .session import Session
 
 logger = logging.getLogger("ray.serve")
+
+
+def _module_args(module_cls: Type[Module]) -> Dict[str, Any]:
+    """The constructor arguments GET /modules publishes for a module class.
+
+    Parameters starting with `_` are left out (the server injects those it
+    passes, like `_handle`)."""
+    try:
+        params = inspect.signature(module_cls).parameters.values()
+    except (TypeError, ValueError):
+        # Informative only: an unreadable signature must not stop the server.
+        logger.warning("Cannot read the arguments of %s", module_cls.__name__)
+        return {"args": [], "accepts_other_args": True}
+    args: List[Dict[str, Any]] = []
+    other = False
+    for p in params:
+        if p.kind is p.VAR_KEYWORD:
+            # The framework bases forward **kwargs to object, which rejects them.
+            other = module_cls.__init__ not in (
+                ModuleWithHandle.__init__,
+                ModuleWithId.__init__,
+            )
+        elif p.name.startswith("_") or p.kind in (p.VAR_POSITIONAL, p.POSITIONAL_ONLY):
+            continue
+        else:
+            a = p.annotation
+            if a is p.empty:
+                type_name = None
+            elif isinstance(a, str):
+                type_name = a
+            else:
+                type_name = inspect.formatannotation(a)
+            arg: Dict[str, Any] = {
+                "name": p.name,
+                "type": type_name,
+                "required": p.default is p.empty,
+            }
+            if p.default is not p.empty:
+                try:
+                    # Starlette's own rule: NaN/inf would otherwise be a 500.
+                    json.dumps(p.default, allow_nan=False)
+                    arg["default"] = p.default
+                except (TypeError, ValueError):
+                    pass
+            args.append(arg)
+    return {"args": args, "accepts_other_args": other}
 
 
 @serve.deployment
@@ -102,6 +150,7 @@ class HuRI:
                     "actuation": name in actuating,
                     "distribution": dists[name][0],
                     "version": dists[name][1],
+                    **_module_args(module_cls),
                 }
                 for name, module_cls in sorted(modules.items())
             },
@@ -120,7 +169,10 @@ class HuRI:
                     "stt": {"input": "huri.voice", "output": "huri.transcript",
                             "actuation": false,
                             "distribution": "huri-module-stt",
-                            "version": "0.3.1"},
+                            "version": "0.3.1",
+                            "args": [{"name": "language", "type": "str",
+                                      "required": false, "default": "en"}],
+                            "accepts_other_args": false},
                     ...
                 },
                 "huri_core": "0.4.0"
@@ -130,6 +182,13 @@ class HuRI:
         for a module that may drive hardware (opted in by its operator), for
         information only. `distribution` and `version` name the installed
         package providing the module, both null for an import-path module.
+        `args` lists the constructor arguments in declaration order: `type` is
+        null if undeclared; `required` means no default; `default` is absent
+        when required or not a plain JSON value (a str default is published
+        as-is); arguments starting with `_` (injected by the server) are not
+        listed. `accepts_other_args` is true for a `**kwargs` in the module's own
+        constructor signature (one that only forwards it to its base still
+        reports true).
         `huri_core` is the PEP 440 version string (a dev
         build reports e.g. "0.4.0.dev0").
         """

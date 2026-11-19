@@ -8,13 +8,13 @@ import json
 import logging
 import struct
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import pytest
 
 from huri_core.core.events import BytesEvent, JsonEvent
 from huri_core.core.huri import HuRI
-from huri_core.core.module import Module
+from huri_core.core.module import Module, ModuleWithId
 from huri_core.core.policy import EventPolicy, InterruptPolicy
 
 # @serve.ingress subclasses the class it decorates (with an async __init__ for
@@ -171,6 +171,72 @@ class Servo(Module):
         return None
 
 
+class Qag(Module):
+    input_type, output_type = "toy.word", "toy.loud"
+
+    def __init__(
+        self, use_emotion: bool = True, mode="parallel", emotion_timeout: float = 10.0
+    ):
+        pass
+
+    async def process(self, data: Word):
+        return None
+
+
+class Greeter(Module):
+    input_type, output_type = "toy.word", None
+
+    def __init__(self, greeting: str, x: "float" = 1.0, *, b: Optional[float] = None):
+        pass
+
+    async def process(self, data: Word):
+        return None
+
+
+class Think(ModuleWithId):
+    input_type, output_type = "toy.word", None
+
+    def __init__(self, _user_id, lead_s: float = 0.3):
+        pass
+
+    async def process(self, data: Word):
+        return None
+
+
+class Stt(Module):
+    input_type, output_type = "toy.word", None
+
+    def __init__(self, language="en", **kwargs):
+        pass
+
+    async def process(self, data: Word):
+        return None
+
+
+class Dock(Module):
+    input_type, output_type = "toy.word", None
+
+    def __init__(self, pose=object(), limit=float("inf"), tags=["a"], extra=None):
+        pass
+
+    async def process(self, data: Word):
+        return None
+
+
+class NoInitId(ModuleWithId):
+    input_type, output_type = "toy.word", None
+
+    async def process(self, data: Word):
+        return None
+
+
+def details_of(**modules):
+    server = Server(modules, {}, dict(EVENTS), actuating=[])
+    status, body = get(server, "/modules")
+    assert status == 200
+    return body["details"]
+
+
 def get(server, path: str):
     """GET `path` on a FastAPI app routing to `server`'s endpoints, through ASGI:
     status and decoded JSON body."""
@@ -260,6 +326,8 @@ def test_get_modules_lists_the_enabled_modules_their_topics_and_actuation():
                 "actuation": False,
                 "distribution": None,
                 "version": None,
+                "args": [],
+                "accepts_other_args": False,
             },
             "servo": {
                 "input": "toy.word",
@@ -267,6 +335,8 @@ def test_get_modules_lists_the_enabled_modules_their_topics_and_actuation():
                 "actuation": True,
                 "distribution": None,
                 "version": None,
+                "args": [],
+                "accepts_other_args": False,
             },
             "upper": {
                 "input": "toy.word",
@@ -274,6 +344,8 @@ def test_get_modules_lists_the_enabled_modules_their_topics_and_actuation():
                 "actuation": False,
                 "distribution": None,
                 "version": None,
+                "args": [],
+                "accepts_other_args": False,
             },
         },
         "huri_core": huri_core.__version__,
@@ -284,6 +356,104 @@ def test_get_modules_lists_the_enabled_modules_their_topics_and_actuation():
     )
     assert ws.sent[0]["type"] == "session_error"
     assert ws.sent[0]["server_modules"] == body["modules"]
+
+
+def test_each_module_lists_its_arguments_with_their_defaults():
+    qag = details_of(qag=Qag)["qag"]
+    assert [a["name"] for a in qag["args"]] == [
+        "use_emotion",
+        "mode",
+        "emotion_timeout",
+    ]
+    assert qag["args"][1] == {
+        "name": "mode",
+        "type": None,
+        "required": False,
+        "default": "parallel",
+    }
+    assert qag["args"][2] == {
+        "name": "emotion_timeout",
+        "type": "float",
+        "required": False,
+        "default": 10.0,
+    }
+
+
+def test_an_arguments_type_is_listed_when_the_module_declares_it():
+    qag = details_of(qag=Qag, greeter=Greeter)
+    assert qag["qag"]["args"][2]["type"] == "float"
+    assert qag["qag"]["args"][1]["type"] is None
+    assert qag["greeter"]["args"][1]["type"] == "float"
+
+
+def test_an_argument_without_a_default_is_listed_as_required():
+    d = details_of(qag=Qag, greeter=Greeter)
+    assert d["greeter"]["args"][0] == {
+        "name": "greeting",
+        "type": "str",
+        "required": True,
+    }
+    assert all(a["required"] is False for a in d["qag"]["args"])
+
+
+def test_arguments_the_server_injects_are_not_listed():
+    args = details_of(think=Think)["think"]["args"]
+    assert [a["name"] for a in args] == ["lead_s"]
+
+
+def test_a_module_that_accepts_any_argument_says_so():
+    d = details_of(stt=Stt, qag=Qag)
+    assert [a["name"] for a in d["stt"]["args"]] == ["language"]
+    assert d["stt"]["accepts_other_args"] is True
+    assert d["qag"]["accepts_other_args"] is False
+
+
+def test_a_module_inheriting_the_framework_constructor_accepts_no_other_argument():
+    d = details_of(plain=NoInitId)["plain"]
+    assert d["args"] == [] and d["accepts_other_args"] is False
+
+
+def test_a_keyword_only_argument_is_listed():
+    args = details_of(greeter=Greeter)["greeter"]["args"]
+    assert args[2]["name"] == "b" and args[2]["default"] is None
+
+
+class Opaque(Module):
+    input_type, output_type = "toy.word", None
+    __signature__ = "unreadable"  # inspect.signature raises on it
+
+    async def process(self, data: Word):
+        return None
+
+
+def test_a_module_whose_signature_cannot_be_read_does_not_stop_the_server(
+    serve_log,
+):
+    d = details_of(odd=Opaque, qag=Qag)
+    assert d["odd"]["args"] == [] and d["odd"]["accepts_other_args"] is True
+    assert d["qag"]["args"]
+    assert "Opaque" in serve_log.text
+
+
+def test_a_default_that_is_not_a_plain_json_value_is_not_shown():
+    args = {a["name"]: a for a in details_of(dock=Dock)["dock"]["args"]}
+    for name in ("pose", "limit"):
+        assert args[name]["required"] is False and "default" not in args[name]
+    assert args["tags"]["default"] == ["a"]
+    assert "default" in args["extra"] and args["extra"]["default"] is None
+
+
+def test_the_existing_fields_of_a_module_are_unchanged():
+    qag = details_of(qag=Qag)["qag"]
+    assert {
+        k: qag[k] for k in ("input", "output", "actuation", "distribution", "version")
+    } == {
+        "input": "toy.word",
+        "output": "toy.loud",
+        "actuation": False,
+        "distribution": None,
+        "version": None,
+    }
 
 
 def test_actuating_is_a_required_argument():
