@@ -313,6 +313,40 @@ async def test_a_topics_publish_line_is_logged_once_per_window_then_counted(
 
 
 @pytest.mark.asyncio
+async def test_a_zero_window_logs_every_publish(graph_logs, monkeypatch):
+    import huri_core.core.bus as bus
+
+    monkeypatch.setattr(bus, "PUBLISH_LOG_WINDOW_S", 0.0)
+    graph = EventGraph()
+    for _ in range(3):
+        await graph.publish("huri.audio.in", DummyEvent(0))
+    lines = [line for line in _graph_lines(graph_logs) if " publish " in line]
+    assert len(lines) == 3 and not any("not logged" in line for line in lines)
+
+
+@pytest.mark.parametrize(
+    "raw, seconds", [(None, 1.0), ("", 1.0), ("0", 0.0), ("2.5", 2.5)]
+)
+def test_the_publish_log_window_is_read_from_the_environment(monkeypatch, raw, seconds):
+    from huri_core.core.bus import _publish_log_window
+
+    if raw is None:
+        monkeypatch.delenv("HURI_PUBLISH_LOG_WINDOW_S", raising=False)
+    else:
+        monkeypatch.setenv("HURI_PUBLISH_LOG_WINDOW_S", raw)
+    assert _publish_log_window() == seconds
+
+
+@pytest.mark.parametrize("raw", ["-1", "nan", "one", "1s"])
+def test_a_bad_publish_log_window_stops_the_server(monkeypatch, raw):
+    from huri_core.core.bus import _publish_log_window
+
+    monkeypatch.setenv("HURI_PUBLISH_LOG_WINDOW_S", raw)
+    with pytest.raises(ValueError, match="HURI_PUBLISH_LOG_WINDOW_S"):
+        _publish_log_window()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["coroutine", "generator", "call"])
 async def test_a_failing_modules_traceback_names_its_package_version_and_session(
     graph_logs, kind

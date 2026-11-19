@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import time
 from collections import defaultdict
 from typing import (
@@ -25,10 +26,24 @@ audit_logger = logging.getLogger("huri.audit")
 # cancellation must not keep the session from finalizing.
 CANCEL_TIMEOUT_S = 5
 
+
+def _publish_log_window() -> float:
+    raw = os.environ.get("HURI_PUBLISH_LOG_WINDOW_S") or "1"
+    try:
+        seconds = float(raw)
+    except ValueError:
+        seconds = -1.0
+    if not seconds >= 0:  # NaN too
+        raise ValueError(
+            f"HURI_PUBLISH_LOG_WINDOW_S must be a number of seconds >= 0, not {raw!r}"
+        )
+    return seconds
+
+
 # A topic's publish line is logged once per window, then counted: it is the same
 # line every time, and logging it per event (microphone audio) doubled the cost
-# of a publish.
-PUBLISH_LOG_WINDOW_S = 1.0
+# of a publish. HURI_PUBLISH_LOG_WINDOW_S=0 logs every publish.
+PUBLISH_LOG_WINDOW_S = _publish_log_window()
 
 # Built once: subscripting a generic in _run cost a typing call per event.
 _Generator = AsyncGenerator[EventData | None, None]

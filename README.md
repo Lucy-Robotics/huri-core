@@ -286,7 +286,8 @@ session goes on.
 when its level reaches both the topic's and the module's level (no level: no
 filter), so `WARNING` on a chatty topic silences its traffic lines. A
 topic's `publish` line, the same for every event, is logged at most once a
-second, with how many publishes the previous line left out. Warnings
+second, with how many publishes the previous line left out
+(`HURI_PUBLISH_LOG_WINDOW_S` on the server: `0` logs every one). Warnings
 and errors are never filtered, nor is the `huri.audit` trail of actuation
 modules, and `log` cannot raise the server's own `ray.serve` level, which the
 operator sets: a session's `DEBUG` shows nothing more than the server already

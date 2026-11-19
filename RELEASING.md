@@ -33,7 +33,8 @@ Public surface, i.e. what a breaking change is measured against:
   namespaces, and the server's HTTP API (the `GET /modules` response);
 - the plugin entry point groups (`huri.modules`, `huri.events`,
   `huri.commands`, `huri.event_policies`), the `HURI_MODULES` /
-  `HURI_ACTUATION_MODULES` / `HURI_EVENT_POLICY` settings and
+  `HURI_ACTUATION_MODULES` / `HURI_EVENT_POLICY` /
+  `HURI_PUBLISH_LOG_WINDOW_S` settings and
   the module manifest (`huri_module.toml`);
 - the `huri` command: how it dispatches to `huri.commands` entry points and
   the signature it calls them with (`main(argv: list[str]) -> int`).
