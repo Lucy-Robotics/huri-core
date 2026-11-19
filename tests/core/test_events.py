@@ -290,6 +290,29 @@ async def test_pipeline_log_lines_name_the_session_and_the_module_version(graph_
 
 
 @pytest.mark.asyncio
+async def test_a_topics_publish_line_is_logged_once_per_window_then_counted(
+    graph_logs, monkeypatch
+):
+    import huri_core.core.bus as bus
+
+    now = [100.0]
+    monkeypatch.setattr(bus.time, "monotonic", lambda: now[0])
+    graph = EventGraph(session_id="s-1")
+    for _ in range(5):
+        await graph.publish("huri.audio.in", DummyEvent(0))
+    now[0] += bus.PUBLISH_LOG_WINDOW_S
+    await graph.publish("huri.audio.in", DummyEvent(0))
+    await graph.publish("huri.transcript", DummyEvent(0))
+
+    lines = [line for line in _graph_lines(graph_logs) if " publish " in line]
+    assert [line.split(" publish ")[1] for line in lines] == [
+        "topic='huri.audio.in' subscribers=[]",
+        "topic='huri.audio.in' subscribers=[] (+4 earlier, not logged)",
+        "topic='huri.transcript' subscribers=[]",
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["coroutine", "generator", "call"])
 async def test_a_failing_modules_traceback_names_its_package_version_and_session(
     graph_logs, kind

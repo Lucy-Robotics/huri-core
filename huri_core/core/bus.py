@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from collections import defaultdict
 from typing import (
     Any,
@@ -23,6 +24,15 @@ audit_logger = logging.getLogger("huri.audit")
 # How long cancel_all() waits for cancelled work: a module that swallows the
 # cancellation must not keep the session from finalizing.
 CANCEL_TIMEOUT_S = 5
+
+# A topic's publish line is logged once per window, then counted: it is the same
+# line every time, and logging it per event (microphone audio) doubled the cost
+# of a publish.
+PUBLISH_LOG_WINDOW_S = 1.0
+
+# Built once: subscripting a generic in _run cost a typing call per event.
+_Generator = AsyncGenerator[EventData | None, None]
+_Coroutine = Coroutine[Any, Any, EventData | None]
 
 
 class EventGraph:
@@ -75,6 +85,8 @@ class EventGraph:
         self.subscribers: defaultdict[str, list[Module]] = defaultdict(list)
         self._policy = policy if policy is not None else EventPolicy()
         self._runs: dict[asyncio.Task, _Run] = {}
+        # topic -> (end of its publish-line window, publishes not logged in it)
+        self._publish_lines: dict[str, tuple[float, int]] = {}
         # Latest-only slots, keyed (id(module), topic): id, as modules may define __eq__
         # shortcut: one module object registered twice on a topic shares one slot,
         # key on the registration instead if a pipeline ever registers a module twice
@@ -92,18 +104,26 @@ class EventGraph:
         self.subscribers[module.input_type].append(module)
 
     async def publish(self, event_topic, data):
-        subs = self.subscribers[event_topic]
-
         if logger.isEnabledFor(logging.INFO) and self._log.allows(
             logging.INFO, event_topic
         ):
-            logger.info(
-                "[GRAPH] session=%s publish topic=%r subscribers=%s",
-                self._session_id,
-                event_topic,
-                [self._label(m) for m in subs],
-            )
+            self._log_publish(event_topic)
         await self._policy.publish(self, event_topic, data)
+
+    def _log_publish(self, topic: str) -> None:
+        now = time.monotonic()
+        until, held = self._publish_lines.get(topic, (0.0, 0))
+        if now < until:
+            self._publish_lines[topic] = (until, held + 1)
+            return
+        self._publish_lines[topic] = (now + PUBLISH_LOG_WINDOW_S, 0)
+        logger.info(
+            "[GRAPH] session=%s publish topic=%r subscribers=%s%s",
+            self._session_id,
+            topic,
+            [self._label(m) for m in self.subscribers[topic]],
+            f" (+{held} earlier, not logged)" if held else "",
+        )
 
     def dispatch(self, topic, data):
         """Start every subscriber of `topic`, as children of the current run."""
@@ -227,14 +247,13 @@ class EventGraph:
         await self.publish(module.output_type, item)
 
     async def _run(self, module: Module, data):
-        label = self._label(module)
         try:
             if type(module) in self._audited:
                 audit_logger.info(
                     "session=%s user=%s module=%s received topic=%r event=%s",
                     self._session_id,
                     self._user_id,
-                    label,
+                    self._label(module),
                     module.input_type,
                     _safe_summary(data),
                 )
@@ -242,7 +261,7 @@ class EventGraph:
 
             if hasattr(result, "__aiter__"):
                 try:
-                    generator = cast(AsyncGenerator[EventData | None, None], result)
+                    generator = cast(_Generator, result)
                     async for item in generator:
                         if item is None:
                             continue
@@ -251,11 +270,11 @@ class EventGraph:
                     logger.exception(
                         "[GRAPH] session=%s async generator failed in %s",
                         self._session_id,
-                        label,
+                        self._label(module),
                     )
 
             else:
-                coroutine = cast(Coroutine[Any, Any, EventData | None], result)
+                coroutine = cast(_Coroutine, result)
                 try:
                     value = await coroutine
                     if value is not None:
@@ -264,7 +283,7 @@ class EventGraph:
                     logger.exception(
                         "[GRAPH] session=%s coroutine failed in %s",
                         self._session_id,
-                        label,
+                        self._label(module),
                     )
 
         except asyncio.CancelledError:
@@ -274,7 +293,7 @@ class EventGraph:
                     "session=%s user=%s module=%s cancelled topic=%r",
                     self._session_id,
                     self._user_id,
-                    label,
+                    self._label(module),
                     module.input_type,
                 )
             raise
@@ -282,7 +301,7 @@ class EventGraph:
             logger.exception(
                 "[GRAPH] session=%s process() call failed in %s",
                 self._session_id,
-                label,
+                self._label(module),
             )
 
 
@@ -295,6 +314,8 @@ def _produces(run: "_Run | None", topics) -> bool:
 
 class _Run:
     """A task the bus started: its module, and the run that published its input."""
+
+    __slots__ = ("module", "parent")
 
     def __init__(self, module: Module, parent: "_Run | None"):
         self.module = module
