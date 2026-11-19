@@ -529,3 +529,47 @@ async def test_cancel_all_stops_and_awaits_every_running_task():
     # awaited: both generators have already seen the cancellation
     assert first.cancelled.is_set() and second.cancelled.is_set()
     assert not graph._runs
+
+
+class Stubborn(Module):
+    """Publishes one last item when it is cancelled."""
+
+    input_type, output_type = "huri.question", "huri.token"
+
+    def __init__(self):
+        self.started = asyncio.Event()
+
+    async def process(self, data):
+        try:
+            self.started.set()
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            yield Text("late")
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_also_stops_work_a_cancelled_module_starts():
+    stubborn = Stubborn()
+    downstream = Streamer("huri.token", "huri.out", hold=["late"])
+    graph = graph_of(None, stubborn, downstream)
+    await graph.publish("huri.question", Text("q"))
+    await within(stubborn.started.wait())
+
+    await graph.cancel_all()
+
+    assert downstream.cancelled.is_set()
+    assert not graph._runs
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_drops_the_waiting_latest_only_value():
+    gaze = SlowSink("acme.gaze")
+    graph = latest_only_graph(None, gaze)
+    await graph.publish("acme.gaze", Text("gaze/0"))
+    await within(gaze.got["gaze/0"].wait())
+    await graph.publish("acme.gaze", Text("gaze/1"))
+
+    await graph.cancel_all()
+
+    assert not graph._runs
+    assert gaze.items == ["gaze/0"]

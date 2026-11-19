@@ -162,19 +162,35 @@ class EventGraph:
     async def cancel_all(self) -> int:
         """Cancel every running task, except the current one, and wait for them
         to stop, so finalize() sees stopped work. Returns how many. A task that
-        ignores the cancellation is logged and left, never waited on forever."""
+        ignores the cancellation is logged and left, never waited on forever.
+        Work started while waiting (a module publishing as it is cancelled, a
+        waiting latest-only value) is cancelled too, within the same deadline."""
         current = asyncio.current_task()
-        tasks = [t for t in list(self._runs) if t is not current]
-        cancelled = sum(task.cancel() for task in tasks)
-        if tasks:
-            _, stuck = await asyncio.wait(tasks, timeout=CANCEL_TIMEOUT_S)
-            for task in stuck:
-                logger.warning(
-                    "[GRAPH] session=%s %s ignored cancellation for %ss",
-                    self._session_id,
-                    self._label(self._runs[task].module),
-                    CANCEL_TIMEOUT_S,
-                )
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + CANCEL_TIMEOUT_S
+        seen: set[asyncio.Task] = set()
+        stuck: set[asyncio.Task] = set()
+        cancelled = 0
+        while True:
+            # A waiting latest-only value would start when its busy run ends.
+            self._pending.clear()
+            tasks = {t for t in self._runs if t is not current}
+            if not tasks:
+                break
+            cancelled += sum(t.cancel() for t in tasks - seen)
+            seen |= tasks
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                stuck = tasks
+                break
+            await asyncio.wait(tasks, timeout=remaining)
+        for task in stuck:
+            logger.warning(
+                "[GRAPH] session=%s %s ignored cancellation for %ss",
+                self._session_id,
+                self._label(self._runs[task].module),
+                CANCEL_TIMEOUT_S,
+            )
         return cancelled
 
     def _forget(self, task: asyncio.Task):
