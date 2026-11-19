@@ -362,6 +362,11 @@ class HuRI:
         try:
             await receive_loop(self.clients[session_id], ws)
         finally:
+            # Stop the running work first: it would publish to a closed socket.
+            try:
+                await self.clients[session_id].event_graph.cancel_all()
+            except Exception:
+                logger.exception("[HuRI] cancelling session work failed")
             # Persist per-session state (e.g. conversation memory) on disconnect.
             for module in modules:
                 fin = getattr(module, "finalize", None)

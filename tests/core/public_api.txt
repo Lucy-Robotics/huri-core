@@ -149,6 +149,7 @@ def huri_core.core.bus.EventGraph.register(self, module: huri_core.core.module.M
 async def huri_core.core.bus.EventGraph.publish(self, event_topic, data)
 def huri_core.core.bus.EventGraph.dispatch(self, topic, data)
 def huri_core.core.bus.EventGraph.cancel(self, topics) -> int
+async def huri_core.core.bus.EventGraph.cancel_all(self) -> int
 class huri_core.core.compat.CompatibilityError(ValueError)
 def huri_core.core.compat.CompatibilityError.__init__(self, problems: List[str])
 def huri_core.core.compat.check_modules(modules: Dict[str, Type[huri_core.core.module.Module]], events: Dict[str, Type[huri_core.core.events.EventData]]) -> None
