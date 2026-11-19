@@ -1,10 +1,15 @@
 """The client SDK against a local websocket server standing in for HuRI."""
 
 import asyncio
+import io
 import json
 import logging
 import socket
+import ssl
+import threading
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest import mock
 
 import pytest
 import websockets
@@ -12,10 +17,12 @@ import websockets
 from huri_core.core.client import (
     ConnectionMessage,
     HuRIClient,
+    HuRIModulesError,
     HuRISessionError,
     decode,
     encode,
     load_client_config,
+    read_server_modules,
 )
 from huri_core.core.dataclasses.config import ClientConfig
 from huri_core.core.events import BytesEvent, JsonEvent
@@ -909,6 +916,242 @@ def test_a_client_given_an_event_policy_that_is_not_a_mapping_fails_before_conne
 ):
     with pytest.raises(ValueError, match="event_policy"):
         HuRIClient("ws://127.0.0.1:1", modules={}, event_policy=event_policy)
+
+
+SERVER_MODULES = {
+    "modules": ["vad", "stt", "tts", "think_stop"],
+    "details": {
+        "vad": {"input": "huri.audio", "output": "huri.voice"},
+        "stt": {"input": "huri.voice", "output": "huri.transcript"},
+        "tts": {"input": "huri.token", "output": "huri.speech"},
+        "think_stop": {"input": "huri.stop", "output": None},
+    },
+    "huri_core": "0.5.0",
+}
+
+
+@pytest.fixture
+def modules_server():
+    """A plain HTTP server standing in for HuRI's GET /modules. Set `.status`
+    and `.body`; `.requests` records (method, path, Upgrade header)."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            server.requests.append((self.command, self.path, self.headers["Upgrade"]))
+            body = server.body
+            if not isinstance(body, bytes):
+                body = json.dumps(body).encode()
+            self.send_response(server.status)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.status, server.body, server.requests = 200, SERVER_MODULES, []
+    server.session_url = f"ws://127.0.0.1:{server.server_port}/session"
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield server
+    server.shutdown()
+    server.server_close()
+    thread.join()
+
+
+def test_a_client_reads_the_servers_modules_from_its_session_url(modules_server):
+    got = run(read_server_modules(modules_server.session_url))
+    assert sorted(got["modules"]) == ["stt", "think_stop", "tts", "vad"]
+    assert got["details"]["stt"]["input"] == "huri.voice"
+    assert got["details"]["stt"]["output"] == "huri.transcript"
+    assert got["huri_core"] == "0.5.0"
+
+
+@pytest.mark.parametrize(
+    "session_url, modules_url",
+    [
+        ("ws://localhost:8000/session", "http://localhost:8000/modules"),
+        ("wss://huri.example.org/session", "https://huri.example.org/modules"),
+        (
+            "wss://huri.example.org:8443/huri/session",
+            "https://huri.example.org:8443/huri/modules",
+        ),
+        ("ws://localhost:8000/session/", "http://localhost:8000/modules"),
+        ("ws://u:p@localhost:8000/session?x=1", "http://localhost:8000/modules"),
+        ("ws://[::1]:8000/session", "http://[::1]:8000/modules"),
+    ],
+)
+def test_the_modules_url_is_derived_from_the_session_url(session_url, modules_url):
+    seen = []
+
+    def urlopen(request, **kwargs):
+        seen.append(request)
+        return io.BytesIO(json.dumps(SERVER_MODULES).encode())
+
+    with mock.patch("urllib.request.urlopen", urlopen):
+        run(read_server_modules(session_url))
+    assert seen == [modules_url]
+
+
+def test_a_module_that_emits_nothing_has_no_output_topic(modules_server):
+    got = run(read_server_modules(modules_server.session_url))
+    assert got["details"]["think_stop"]["output"] is None
+
+
+def test_reading_the_modules_opens_no_session(modules_server):
+    run(read_server_modules(modules_server.session_url))
+    assert modules_server.requests == [("GET", "/modules", None)]
+
+
+def test_an_unreachable_server_is_reported_with_its_url():
+    with socket.socket() as sock:  # a port nobody listens on once closed
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    with pytest.raises(HuRIModulesError) as exc:
+        run(read_server_modules(f"ws://127.0.0.1:{port}/session"))
+    assert f"http://127.0.0.1:{port}/modules" in str(exc.value)
+    assert "unreachable" in str(exc.value)
+
+
+def _trickle(sock, stop):
+    """Answers with headers, then one body byte every 0.05 s until `stop`."""
+    conn, _ = sock.accept()
+    with conn:
+        conn.recv(1024)
+        conn.sendall(b"HTTP/1.0 200 OK\r\nContent-Length: 1000\r\n\r\n")
+        while not stop.wait(0.05):
+            conn.sendall(b" ")
+
+
+def test_a_server_that_trickles_its_answer_times_out_as_a_whole():
+    stop = threading.Event()
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen()
+        threading.Thread(target=_trickle, args=(sock, stop), daemon=True).start()
+        url = f"ws://127.0.0.1:{sock.getsockname()[1]}/session"
+
+        async def read():
+            try:
+                await read_server_modules(url, timeout=0.3)
+            finally:
+                stop.set()  # lets the reading thread end
+
+        with pytest.raises(HuRIModulesError, match="did not answer in time"):
+            run(read())
+
+
+def test_a_url_that_is_not_a_huri_server_is_reported(modules_server):
+    modules_server.status, modules_server.body = 404, b"nope"
+    with pytest.raises(HuRIModulesError) as exc:
+        run(read_server_modules(modules_server.session_url))
+    assert f":{modules_server.server_port}/modules" in str(exc.value)
+    assert "404" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{"status": "ok"}, b"<html>", ["vad"], {"modules": ["vad"], "details": []}],
+)
+def test_an_answer_without_the_modules_list_is_reported(modules_server, body):
+    modules_server.body = body
+    with pytest.raises(HuRIModulesError, match="does not list modules"):
+        run(read_server_modules(modules_server.session_url))
+
+
+def test_details_the_server_adds_reach_the_client(modules_server):
+    args = [{"name": "language", "type": "str", "required": False, "default": "en"}]
+    modules_server.body = {
+        "modules": ["stt"],
+        "details": {
+            "stt": {"input": "huri.voice", "output": "huri.transcript", "args": args}
+        },
+    }
+    got = run(read_server_modules(modules_server.session_url))
+    assert got["details"]["stt"]["args"] == args
+
+
+def test_a_server_with_a_private_ca_is_read_with_the_clients_tls_context():
+    context = ssl.create_default_context()
+    seen = []
+
+    def urlopen(request, **kwargs):
+        seen.append(kwargs["context"])
+        return io.BytesIO(json.dumps(SERVER_MODULES).encode())
+
+    with mock.patch("urllib.request.urlopen", urlopen):
+        run(read_server_modules("wss://huri.example.org/session", ssl=context))
+    assert len(seen) == 1 and seen[0] is context
+
+
+@pytest.mark.parametrize(
+    "url", ["localhost:8000/session", "file:///etc/passwd", "ftp://h/session"]
+)
+def test_a_session_url_that_is_not_a_websocket_or_http_url_is_reported(url):
+    with mock.patch("urllib.request.urlopen") as urlopen:
+        with pytest.raises(HuRIModulesError) as exc:
+            run(read_server_modules(url))
+    assert url in str(exc.value)
+    urlopen.assert_not_called()
+
+
+def _raw_server(reply):
+    """A listening socket that sends `reply` (None: nothing) to each client."""
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    sock.listen()
+    threading.Thread(target=_serve_raw, args=(sock, reply), daemon=True).start()
+    return sock
+
+
+def _serve_raw(sock, reply):
+    try:
+        conn, _ = sock.accept()
+    except OSError:
+        return
+    with conn:
+        if reply is None:
+            conn.settimeout(2)
+            try:
+                conn.recv(1024)
+                conn.recv(1024)  # hold the connection until the client leaves
+            except OSError:
+                pass
+        else:
+            conn.recv(1024)
+            conn.sendall(reply)
+
+
+def test_a_port_that_is_not_http_is_reported_with_its_url():
+    with _raw_server(b"SSH-2.0-OpenSSH_9.0\r\n") as sock:
+        port = sock.getsockname()[1]
+        with pytest.raises(HuRIModulesError) as exc:
+            run(read_server_modules(f"ws://127.0.0.1:{port}/session"))
+    assert f"http://127.0.0.1:{port}/modules" in str(exc.value)
+
+
+def test_a_dropped_answer_is_reported_with_its_url():
+    reply = b"HTTP/1.0 200 OK\r\nContent-Length: 100\r\n\r\n{"
+    with _raw_server(reply) as sock:
+        port = sock.getsockname()[1]
+        with pytest.raises(HuRIModulesError) as exc:
+            run(read_server_modules(f"ws://127.0.0.1:{port}/session"))
+    assert f"http://127.0.0.1:{port}/modules" in str(exc.value)
+
+
+def test_a_non_numeric_port_is_reported():
+    with pytest.raises(HuRIModulesError, match="ws://h:abc/session"):
+        run(read_server_modules("ws://h:abc/session"))
+
+
+def test_a_server_that_never_answers_times_out_with_its_url():
+    with _raw_server(None) as sock:
+        port = sock.getsockname()[1]
+        with pytest.raises(HuRIModulesError) as exc:
+            run(read_server_modules(f"ws://127.0.0.1:{port}/session", timeout=0.2))
+    assert f"http://127.0.0.1:{port}/modules" in str(exc.value)
+    assert "did not answer in time" in str(exc.value)
 
 
 def test_the_handshake_carries_the_latest_only_topics(tmp_path):

@@ -100,6 +100,44 @@ def test_client_side_imports_without_the_server_stack():
     assert res.returncode == 0, res.stderr
 
 
+def test_reading_the_modules_needs_only_the_client_extra():
+    code = (
+        "import sys\n"
+        + "".join(f"sys.modules[{m!r}] = None\n" for m in sorted(NOT_FOR_CLIENTS))
+        + """
+import asyncio, json, threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from huri_core.core.client import read_server_modules
+
+BODY = json.dumps({"modules": ["stt", "tts", "vad"], "details": {}}).encode()
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(BODY)))
+        self.end_headers()
+        self.wfile.write(BODY)
+    def log_message(self, *args):
+        pass
+
+server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+threading.Thread(target=server.serve_forever, daemon=True).start()
+url = f"ws://127.0.0.1:{server.server_port}/session"
+got = asyncio.run(read_server_modules(url))
+server.shutdown()
+assert sorted(got["modules"]) == ["stt", "tts", "vad"], got
+"""
+    )
+    res = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert res.returncode == 0, res.stderr
+
+
 def source_path(module: str) -> Path:
     path = ROOT.joinpath(*module.split("."))
     return path / "__init__.py" if path.is_dir() else path.with_suffix(".py")
