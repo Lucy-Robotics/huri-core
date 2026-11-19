@@ -132,8 +132,12 @@ runs them.
 
 `make bench-compare` (`BASE=origin/dev` by default) runs the same benchmarks on a
 worktree of the base branch and on this tree, shows both side by side and fails
-when a mean is more than 25% slower. CI runs exactly this on pull requests,
-non-blocking, and puts the table in the job summary.
+when a mean is more than 25% slower. With `RELEASE=<tag>` it also compares
+this tree with that release, report only: against the base a pull request
+sees its own change, against the last release all the cost merged since (how
+the 2× bus slowdown of 0.5.0 was found, on the release pull request only). CI
+runs both on pull requests, non-blocking, with the last `X.Y.Z` tag as
+`RELEASE`, and puts both tables in the job summary.
 
 - The bus numbers are per batch of 1000 publishes, not per publish (the chained
   streaming benchmark is per 5 events); the sender numbers are per batch of
