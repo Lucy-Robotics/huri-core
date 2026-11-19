@@ -83,7 +83,9 @@ and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#versions-and-how-a-core-change-p
 5. **Open a pull request to `dev`** and fill in its template: what changes and
    why, the issue it closes (`Closes #58`) and how you tested it.
 6. **CI must pass.** Every repository runs it on each push and pull request,
-   and `dev` and `main` refuse a merge while a required check fails.
+   and `dev` and `main` refuse a merge while a required check fails. On a
+   pull request from a first-time contributor's fork, CI waits until a
+   maintainer approves the run.
 7. **Another person approves.** Every pull request into `dev` or `main` needs
    the approval of a maintainer who is not its author, and a new push
    dismisses an earlier approval. Nobody merges their own work unreviewed,

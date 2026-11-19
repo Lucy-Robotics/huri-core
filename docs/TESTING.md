@@ -48,6 +48,7 @@ CI, and what huri-plugin-template gives each new module.
 | Lint (black, isort, flake8, mypy), unit and integration tests with the coverage floor, build of every package | `ci.yml`, on every push to any branch and on every pull request, in both repositories | yes, on `dev` and `main` |
 | Tests on Python 3.10, 3.11 and 3.12 | huri-core `ci.yml` (huri-modules tests on 3.12) | yes |
 | A client install carries no server stack (no Ray, no FastAPI) | huri-core `ci.yml` | yes |
+| Benchmarks against the base branch (`make bench-compare`) | huri-core `ci.yml`, on pull requests | no: it warns until its noise is known |
 | Installer plan on Ubuntu 22.04, 24.04 and Arch | huri-modules `ci.yml` | yes |
 | huri-modules against huri-core `dev` (canary) | huri-modules `ci.yml` | no: it warns, so a core change is seen before its release |
 | Base Docker image built and a real session run against it | huri-modules `docker.yml`, on each pull request that touches `deploy/`, `packages/` or the pins | not a required check; a red run is fixed before merging |
@@ -113,6 +114,34 @@ the tests out of the count. The report lists the uncovered lines. Locally:
 pytest --cov=huri_core --cov-branch --cov-report=term-missing --cov-fail-under=80   # huri-core
 pytest --cov=packages --cov-branch --cov-report=term-missing --cov-fail-under=75    # huri-modules
 ```
+
+## Benchmarks
+
+`tests/benchmarks/` times the hot paths of huri-core: the event bus
+(`EventGraph.publish` to the subscribers' tasks finishing), the client wire
+codec (`encode` then `decode`) and the server `Sender`. Run them with:
+
+```sh
+make bench
+```
+
+It prints the mean, median and number of rounds of each benchmark. A plain
+`pytest` leaves them out (`--ignore=tests/benchmarks` in `pyproject.toml`), so
+it runs without `pytest-benchmark`; passing the path, as `make bench` does,
+runs them.
+
+`make bench-compare` (`BASE=origin/dev` by default) runs the same benchmarks on a
+worktree of the base branch and on this tree, shows both side by side and fails
+when a mean is more than 25% slower. CI runs exactly this on pull requests,
+non-blocking, and puts the table in the job summary.
+
+- The bus numbers are per batch of 1000 publishes, not per publish (the chained
+  streaming benchmark is per 5 events); the sender numbers are per batch of
+  1000 frames and the codec numbers per frame.
+- Logging is at INFO, like production, with the records sent to a null handler.
+- A benchmark whose subscribers miss an event fails instead of reporting a time.
+- Out of scope: models, Ray, network and hardware. The sender benchmark skips
+  without the `server` extra and the codec one without `client`.
 
 ## Team conventions
 

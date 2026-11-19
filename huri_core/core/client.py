@@ -50,7 +50,7 @@ from urllib.parse import urlsplit, urlunsplit
 import websockets
 from omegaconf import OmegaConf
 
-from huri_core.core.dataclasses.config import ClientConfig, LogConfig
+from huri_core.core.dataclasses.config import ClientConfig, LogConfig, _latest_only_list
 from huri_core.core.events import EventData, _safe_summary
 from huri_core.core.user_config import get_or_create_and_save_user_id
 
@@ -218,6 +218,9 @@ class HuRIClient:
     :event_policy: this session's event policy settings, as in the YAML
         `event_policy:` section ({"interrupts": {"acme.stop": ["huri.token"]}}).
         The server checks them and refuses the session if they are wrong.
+    :latest_only: topics whose busy subscribers get only the newest value, as
+        in the YAML `latest_only:` list. The server refuses the session if one
+        is not a topic of the session.
     :connect_kwargs: extra options for ``websockets.connect`` (e.g. ``ssl`` for
         a server with a private CA, ``additional_headers``). By default the
         message size limit is lifted (``max_size=None``): audio and motion
@@ -232,6 +235,7 @@ class HuRIClient:
         user_id: Optional[str] = None,
         log: Optional[Mapping[str, Any]] = None,
         event_policy: Optional[Mapping[str, Any]] = None,
+        latest_only: Optional[List[str]] = None,
         connect_kwargs: Optional[Mapping[str, Any]] = None,
     ):
         self.url = url
@@ -247,6 +251,7 @@ class HuRIClient:
         if not isinstance(event_policy, Mapping):
             raise ValueError(f"`event_policy` must be a mapping, not {event_policy!r}")
         self.event_policy = dict(event_policy)
+        self.latest_only = _latest_only_list(latest_only)
         self._subs: Dict[str, _Subscription] = {}
         self._ws: Optional[websockets.ClientConnection] = None
         self._tasks: List[asyncio.Task] = []
@@ -268,6 +273,7 @@ class HuRIClient:
             user_id=config.user_id,
             log=config.log.to_dict(),
             event_policy=config.event_policy,
+            latest_only=config.latest_only,
         )
 
     # --- configuration ----------------------------------------------------
@@ -324,6 +330,8 @@ class HuRIClient:
             request["log"] = log
         if self.event_policy:
             request["event_policy"] = self.event_policy
+        if self.latest_only:
+            request["latest_only"] = self.latest_only
         return request
 
     # --- connection ---------------------------------------------------------

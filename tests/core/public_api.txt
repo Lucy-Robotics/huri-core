@@ -39,7 +39,7 @@ huri_core.core.dataclasses.config.ModuleConfig.key  [property]
 def huri_core.core.dataclasses.config.ModuleConfig.from_dict(raw: dict) -> 'ModuleConfig'  [classmethod]
 def huri_core.core.dataclasses.config.ModuleConfig.to_dict(self) -> Dict[str, Any]
 class huri_core.core.dataclasses.config.ClientConfig(object)
-huri_core.core.dataclasses.config.ClientConfig: dataclass(user_id: str, modules: Dict[str, huri_core.core.dataclasses.config.ModuleConfig], subscribe: List[str], send: List[str], huri_url: str = '', log: huri_core.core.dataclasses.config.LogConfig = <factory>, event_policy: Dict[str, Any] = <factory>) -> None
+huri_core.core.dataclasses.config.ClientConfig: dataclass(user_id: str, modules: Dict[str, huri_core.core.dataclasses.config.ModuleConfig], subscribe: List[str], send: List[str], huri_url: str = '', log: huri_core.core.dataclasses.config.LogConfig = <factory>, event_policy: Dict[str, Any] = <factory>, latest_only: List[str] = <factory>) -> None
 huri_core.core.dataclasses.config.ClientConfig.user_id: str
 huri_core.core.dataclasses.config.ClientConfig.modules: Dict[str, huri_core.core.dataclasses.config.ModuleConfig]
 huri_core.core.dataclasses.config.ClientConfig.subscribe: List[str]
@@ -47,6 +47,7 @@ huri_core.core.dataclasses.config.ClientConfig.send: List[str]
 huri_core.core.dataclasses.config.ClientConfig.huri_url: str
 huri_core.core.dataclasses.config.ClientConfig.log: huri_core.core.dataclasses.config.LogConfig
 huri_core.core.dataclasses.config.ClientConfig.event_policy: Dict[str, Any]
+huri_core.core.dataclasses.config.ClientConfig.latest_only: List[str]
 huri_core.core.dataclasses.config.ClientConfig.huri_url = ''
 huri_core.core.dataclasses.config.ClientConfig.LEGACY_KEYS = ('interface_path', 'senders', 'hooks')
 def huri_core.core.dataclasses.config.ClientConfig.from_dict(raw: Dict) -> 'ClientConfig'  [classmethod]
@@ -58,7 +59,7 @@ def huri_core.core.dataclasses.config.LogConfig.from_dict(raw: Mapping[str, Any]
 def huri_core.core.dataclasses.config.LogConfig.to_dict(self) -> Dict[str, Dict[Hashable, str]]
 def huri_core.core.dataclasses.config.LogConfig.allows(self, level: int, topic: str, module_id: Optional[Hashable] = None) -> bool
 class huri_core.core.client.HuRIClient(object)
-def huri_core.core.client.HuRIClient.__init__(self, url: str, modules: Mapping[str, Mapping[str, Any]], sends: Iterable[str] = (), user_id: Optional[str] = None, log: Optional[Mapping[str, Any]] = None, event_policy: Optional[Mapping[str, Any]] = None, connect_kwargs: Optional[Mapping[str, Any]] = None)
+def huri_core.core.client.HuRIClient.__init__(self, url: str, modules: Mapping[str, Mapping[str, Any]], sends: Iterable[str] = (), user_id: Optional[str] = None, log: Optional[Mapping[str, Any]] = None, event_policy: Optional[Mapping[str, Any]] = None, latest_only: Optional[List[str]] = None, connect_kwargs: Optional[Mapping[str, Any]] = None)
 def huri_core.core.client.HuRIClient.from_config(config: huri_core.core.dataclasses.config.ClientConfig) -> 'HuRIClient'  [classmethod]
 def huri_core.core.client.HuRIClient.on(self, topic: str, event_cls: Type[~E], handler: Callable[[~E], Awaitable[NoneType]], *, concurrent: bool = False) -> None
 def huri_core.core.client.HuRIClient.on_connection(self, handler: Callable[[huri_core.core.client.ConnectionMessage], Awaitable[NoneType]]) -> None
@@ -143,7 +144,7 @@ def huri_core.core.policy.InterruptPolicy.__init__(self, interrupts: Optional[Ma
 def huri_core.core.policy.InterruptPolicy.check(self, topics: Collection[str]) -> None
 async def huri_core.core.policy.InterruptPolicy.publish(self, graph: 'EventGraph', topic: str, data) -> None
 class huri_core.core.bus.EventGraph(object)
-def huri_core.core.bus.EventGraph.__init__(self, session_id: str = '-', user_id: str = '-', labels: Optional[Mapping[type, str]] = None, audited: Collection[type] = (), log: Optional[huri_core.core.dataclasses.config.LogConfig] = None, module_ids: Optional[Mapping[int, Hashable]] = None, policy: Optional[huri_core.core.policy.EventPolicy] = None) -> None
+def huri_core.core.bus.EventGraph.__init__(self, session_id: str = '-', user_id: str = '-', labels: Optional[Mapping[type, str]] = None, audited: Collection[type] = (), log: Optional[huri_core.core.dataclasses.config.LogConfig] = None, module_ids: Optional[Mapping[int, Hashable]] = None, policy: Optional[huri_core.core.policy.EventPolicy] = None, latest_only: Collection[str] = ()) -> None
 def huri_core.core.bus.EventGraph.register(self, module: huri_core.core.module.Module)
 async def huri_core.core.bus.EventGraph.publish(self, event_topic, data)
 def huri_core.core.bus.EventGraph.dispatch(self, topic, data)
