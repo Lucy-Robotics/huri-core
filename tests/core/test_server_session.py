@@ -167,6 +167,18 @@ def test_a_malformed_frame_is_dropped_not_fatal(bad_frame, serve_log):
     assert "malformed frame" in warnings[0].message
 
 
+def test_malformed_frame_log_includes_the_exception_type(serve_log):
+    session(
+        FakeSocket(
+            handshake({"a": {"name": "upper"}}, ["toy.loud"], ["toy.word"]),
+            json.dumps({"type": "status"}),
+        )
+    )
+    warnings = [r for r in serve_log.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "dropping malformed frame: KeyError('topic')" in warnings[0].message
+
+
 def test_publish_failures_are_not_treated_as_malformed_frames(monkeypatch):
     async def fail_publish(self, topic, event_data):
         raise ValueError("publish failed")

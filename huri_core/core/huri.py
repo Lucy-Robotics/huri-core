@@ -266,7 +266,7 @@ class HuRI:
                         event_data = self.event_factory.create(topic, data)
                     except (KeyError, TypeError, ValueError, struct.error) as e:
                         logger.warning(
-                            "[HuRI] client %s: dropping malformed frame: %s",
+                            "[HuRI] client %s: dropping malformed frame: %r",
                             client_config.user_id,
                             e,
                         )
