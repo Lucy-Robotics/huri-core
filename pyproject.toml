@@ -113,4 +113,4 @@ exclude = [
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 # Benchmarks are slow and noisy: only `make bench` runs them.
-addopts = "--benchmark-skip"
+addopts = "--ignore=tests/benchmarks"

@@ -126,8 +126,9 @@ make bench
 ```
 
 It prints the mean, median and number of rounds of each benchmark. A plain
-`pytest` skips them (`--benchmark-skip` in `pyproject.toml`), so it needs
-the `dev` extra installed.
+`pytest` leaves them out (`--ignore=tests/benchmarks` in `pyproject.toml`), so
+it runs without `pytest-benchmark`; passing the path, as `make bench` does,
+runs them.
 
 `make bench-compare` (`BASE=origin/dev` by default) runs the same benchmarks on a
 worktree of the base branch and on this tree, shows both side by side and fails
