@@ -14,7 +14,12 @@ cols=mean,median,rounds
 tmp="$(mktemp -d)"
 # The store lives under the repo: pytest-benchmark fails to compare from a store outside the cwd.
 store_dir="$PWD/.benchmarks/compare-$$"
-trap 'for w in "$tmp"/*/; do git worktree remove --force "$w" 2>/dev/null; done; rm -rf "$tmp" "$store_dir"' EXIT
+cleanup() {
+  local w
+  for w in "$tmp"/*/; do git worktree remove --force "$w" 2>/dev/null; done
+  rm -rf "$tmp" "$store_dir"
+}
+trap cleanup EXIT
 store="file://$store_dir"
 
 note() { [[ -n "$summary" ]] && echo "$1" >> "$summary"; echo "$1"; }
