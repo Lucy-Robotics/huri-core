@@ -20,6 +20,10 @@ from .policy import EventPolicy
 logger = logging.getLogger("ray.serve")
 audit_logger = logging.getLogger("huri.audit")
 
+# How long cancel_all() waits for cancelled work: a module that swallows the
+# cancellation must not keep the session from finalizing.
+CANCEL_TIMEOUT_S = 5
+
 
 class EventGraph:
     """
@@ -153,6 +157,24 @@ class EventGraph:
         for key, (module, _, parent) in list(self._pending.items()):
             if _produces(_Run(module, parent), topics):
                 del self._pending[key]
+        return cancelled
+
+    async def cancel_all(self) -> int:
+        """Cancel every running task, except the current one, and wait for them
+        to stop, so finalize() sees stopped work. Returns how many. A task that
+        ignores the cancellation is logged and left, never waited on forever."""
+        current = asyncio.current_task()
+        tasks = [t for t in list(self._runs) if t is not current]
+        cancelled = sum(task.cancel() for task in tasks)
+        if tasks:
+            _, stuck = await asyncio.wait(tasks, timeout=CANCEL_TIMEOUT_S)
+            for task in stuck:
+                logger.warning(
+                    "[GRAPH] session=%s %s ignored cancellation for %ss",
+                    self._session_id,
+                    self._label(self._runs[task].module),
+                    CANCEL_TIMEOUT_S,
+                )
         return cancelled
 
     def _forget(self, task: asyncio.Task):

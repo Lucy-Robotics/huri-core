@@ -511,3 +511,21 @@ async def test_a_failing_subscriber_still_receives_the_newest_value(caplog):
     assert gaze.items == ["gaze/0", "gaze/1"]
     failures = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert failures and all("SlowSink" in r.getMessage() for r in failures)
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_stops_and_awaits_every_running_task():
+    first = Streamer("huri.question", "huri.token", hold=["a"])
+    second = Streamer("huri.question", "huri.token", hold=["b"])
+    tokens = Sink("huri.token")
+    graph = graph_of(None, first, second, tokens)
+    await graph.publish("huri.question", Text("a"))
+    await within(tokens.got["a/0"].wait())
+    await graph.publish("huri.question", Text("b"))
+    await within(tokens.got["b/0"].wait())
+
+    assert await graph.cancel_all() == 2
+
+    # awaited: both generators have already seen the cancellation
+    assert first.cancelled.is_set() and second.cancelled.is_set()
+    assert not graph._runs

@@ -207,7 +207,8 @@ class Shout(Module):
 generator yielding any number of them (streaming: tokens, audio chunks...).
 A module is built once per session, with the `args:` of the client's config as
 keyword arguments; an optional `async def finalize(self)` runs when the
-session ends (to persist per-user state, for instance).
+session ends (to persist per-user state, for instance), after the work still
+running for that session has been cancelled.
 
 Two mixins cover what the server injects:
 
