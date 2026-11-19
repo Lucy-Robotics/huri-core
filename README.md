@@ -165,7 +165,7 @@ The base install (no extra) has no dependency at all: the base classes and
 package.
 
 A **module author** depends on a huri-core range in the package's
-`pyproject.toml`, e.g. `"huri-core[server]>=0.4,<0.5"` (see
+`pyproject.toml`, e.g. `"huri-core[server]>=0.5,<0.6"` (see
 [Versioning](#versioning-and-compatibility)). Modules that use the
 curated `huri.*` topics also depend on `huri-events`, which lives in
 huri-modules:
@@ -419,7 +419,7 @@ input = { topic = "huri.motion", event = "huri_events.motion:Motion" }
 output = { topic = "acme.servo_angles", event = "huri_servo.events:ServoAngles" }  # omit for a terminal module
 events = ["huri-events>=0.1,<0.2"]               # optional
 requires = { gpu = false, actuation = false }    # optional
-huri_core = ">=0.4,<0.5"
+huri_core = ">=0.5,<0.6"
 ```
 
 (An unpackaged module's manifest sits next to its file, named after its class
@@ -465,7 +465,7 @@ so a client can build its handshake, or check it, before connecting.
       "version": "0.1.0"
     }
   },
-  "huri_core": "0.4.0"
+  "huri_core": "0.5.0"
 }
 ```
 
@@ -607,7 +607,7 @@ my-echo/
 [project]
 name = "my-echo"
 version = "0.1.0"
-dependencies = ["huri-core>=0.4,<0.5"]
+dependencies = ["huri-core>=0.5,<0.6"]
 
 [project.entry-points."huri.modules"]
 shout = "my_echo:Shout"
@@ -687,10 +687,10 @@ From here:
 
 huri-core follows semver with tags `X.Y.Z` (no `v` prefix); `dev` is the
 development branch, `main` the latest release. While huri-core is `0.x`, a
-**minor** release (`0.4` → `0.5`) may break the public surface and a patch
+**minor** release (`0.5` → `0.6`) may break the public surface and a patch
 release never does, so modules and event packages pin a minor range:
-`huri-core>=0.4,<0.5`. A `dev` build (`0.5.0.dev0`, ...) is a pre-release:
-`>=0.5` excludes it until `0.5.0` is tagged. The public surface (base classes, client SDK and
+`huri-core>=0.5,<0.6`. A `dev` build (`0.6.0.dev0`, ...) is a pre-release:
+`>=0.6` excludes it until `0.6.0` is tagged. The public surface (base classes, client SDK and
 session schema, wire protocol, entry point groups, manifest) is listed in
 [RELEASING.md](RELEASING.md).
 
@@ -702,6 +702,7 @@ release:
 | ------------ | --------- | ----------------------------------------------- |
 | 0.1.x        | 0.4.x     | 0.1.x                                           |
 | 0.2.x        | 0.4.x     | 0.1.x, from 0.1.1                               |
+| 0.3.x        | 0.5.x     | 0.2.x                                           |
 
 huri-modules' CI also runs against huri-core's `dev`, so a breaking change here
 is seen there before it is released.
