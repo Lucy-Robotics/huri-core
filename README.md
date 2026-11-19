@@ -382,6 +382,30 @@ What this is not:
 
 Design: [issue #139](https://github.com/Lucy-Robotics/huri-core/issues/139).
 
+### Latest-only topics
+
+By default each published value starts its own run of every subscriber, so a
+slow subscriber piles up runs on stale values. For a fast, stale-able stream (a
+gaze position, say), declare the topic **latest-only**: each subscriber of it
+then has at most one run in flight plus one waiting slot, and each newer value
+overwrites the waiting one, so a busy subscriber gets only the newest value.
+Declare it per session, in the config (or `HuRIClient(..., latest_only=[...])`),
+whatever the event policy:
+
+```yaml
+latest_only: [acme.gaze]
+```
+
+"Busy" means the subscriber's `process()` call for that topic has not
+finished: a streaming module is busy for its whole stream. It applies to what
+is sent to the client too. An interrupt rule that would cancel a subscriber's
+run also drops the value waiting for it. A topic the session does not have
+refuses the session (`session_error` naming it); an older server ignores the
+key and delivers every value.
+
+Never declare `huri.audio.in` or any stateful stream: VAD and STT keep state
+across frames, and dropped frames corrupt it.
+
 ### Manifests and the startup and session checks
 
 A module package ships a `huri_module.toml` per module, next to its code, so

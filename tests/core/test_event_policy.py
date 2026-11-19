@@ -385,3 +385,129 @@ async def test_the_policy_line_carries_the_session_and_follows_its_log_levels(
         if logged
         else []
     )
+
+
+# ---------------------------------------------------------------------------
+# Latest-only delivery
+# ---------------------------------------------------------------------------
+
+
+class SlowSink(Sink):
+    """A Sink that, once it records an item, waits for `gate` before it is
+    done; raises on its first item past the gate if `fail` is set."""
+
+    def __init__(
+        self, topic: str, lock: Optional[asyncio.Lock] = None, fail: bool = False
+    ):
+        super().__init__(topic)
+        self.gate = asyncio.Event()
+        self.lock = lock
+        self.fail = fail
+
+    async def process(self, data):
+        async with self.lock or contextlib.nullcontext():
+            await super().process(data)
+            await self.gate.wait()
+        if self.fail:
+            self.fail = False
+            raise RuntimeError("boom")
+
+
+def latest_only_graph(policy: Optional[EventPolicy], *modules: Module) -> EventGraph:
+    kwargs = {} if policy is None else {"policy": policy}
+    graph = EventGraph(latest_only={"acme.gaze"}, **kwargs)
+    for module in modules:
+        graph.register(module)
+    return graph
+
+
+@pytest.mark.asyncio
+async def test_a_slow_subscriber_gets_only_the_newest_value():
+    gaze = SlowSink("acme.gaze")
+    graph = latest_only_graph(None, gaze)
+    await graph.publish("acme.gaze", Text("gaze/0"))
+    await within(gaze.got["gaze/0"].wait())
+
+    for i in (1, 2, 3):
+        await graph.publish("acme.gaze", Text(f"gaze/{i}"))
+
+    gaze.gate.set()
+    await settled(graph)
+    assert gaze.items == ["gaze/0", "gaze/3"]
+
+
+@pytest.mark.asyncio
+async def test_other_topics_are_never_dropped():
+    audio = SlowSink("huri.audio.in", lock=asyncio.Lock())
+    graph = latest_only_graph(None, audio)
+    await graph.publish("huri.audio.in", Text("frame/0"))
+    await within(audio.got["frame/0"].wait())
+
+    for i in range(1, 5):
+        await graph.publish("huri.audio.in", Text(f"frame/{i}"))
+
+    audio.gate.set()
+    await settled(graph)
+    assert audio.items == [f"frame/{i}" for i in range(5)]
+
+
+@pytest.mark.asyncio
+async def test_an_interruption_drops_the_pending_latest_value():
+    tracker = Streamer("acme.frame", "acme.gaze", parts=1)
+    gaze = SlowSink("acme.gaze")
+    graph = latest_only_graph(
+        InterruptPolicy({"acme.stop": ["acme.gaze"]}), tracker, gaze
+    )
+    await graph.publish("acme.frame", Text("a"))
+    await within(gaze.got["a/0"].wait())
+    await within(tracker.finished.wait())
+    tracker.finished.clear()
+    await graph.publish("acme.frame", Text("b"))
+    await within(tracker.finished.wait())  # b/0 is in the slot
+
+    await graph.publish("acme.stop", Text("stop"))
+
+    gaze.gate.set()
+    await settled(graph)
+    assert gaze.items == ["a/0"]
+
+
+@pytest.mark.asyncio
+async def test_an_interruption_drops_the_pending_value_of_an_interrupted_subscriber():
+    # The latest-only subscriber itself produces the interrupted topic.
+    follower = Streamer("acme.gaze", "acme.head.cmd", parts=1, hold=["g0"])
+    motor = Sink("acme.head.cmd")
+    graph = latest_only_graph(
+        InterruptPolicy({"acme.stop": ["acme.head.cmd"]}), follower, motor
+    )
+    await graph.publish("acme.gaze", Text("g0"))
+    await within(motor.got["g0/0"].wait())
+    await graph.publish("acme.gaze", Text("g1"))  # client-published, in the slot
+
+    await graph.publish("acme.stop", Text("stop"))
+
+    await within(follower.cancelled.wait())
+    await settled(graph)
+    assert motor.items == ["g0/0"]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_subscriber_still_receives_the_newest_value(caplog):
+    gaze = SlowSink("acme.gaze", fail=True)
+    graph = latest_only_graph(None, gaze)
+    bus_logger = logging.getLogger("ray.serve")
+    bus_logger.addHandler(caplog.handler)  # Ray may stop it propagating to root
+    try:
+        await graph.publish("acme.gaze", Text("gaze/0"))
+        await within(gaze.got["gaze/0"].wait())
+        await graph.publish("acme.gaze", Text("gaze/1"))
+
+        gaze.gate.set()
+
+        await within(gaze.got["gaze/1"].wait())
+        await settled(graph)
+    finally:
+        bus_logger.removeHandler(caplog.handler)
+    assert gaze.items == ["gaze/0", "gaze/1"]
+    failures = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert failures and all("SlowSink" in r.getMessage() for r in failures)

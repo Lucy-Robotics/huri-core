@@ -2,7 +2,7 @@ import json
 import logging
 import struct
 import uuid
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Type
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Type
 
 from fastapi import WebSocket, WebSocketDisconnect
 from ray import serve
@@ -135,8 +135,21 @@ class HuRI:
         """
         return self.modules_info
 
+    @staticmethod
+    def _session_topics(
+        client_config: ClientConfig, pipeline: List[Module]
+    ) -> Set[str]:
+        """Every topic of the session: the module input and output topics plus
+        the client's send and subscribe topics."""
+        topics = {*client_config.send, *client_config.subscribe}
+        for module in pipeline:
+            topics.add(module.input_type)
+            if module.output_type is not None:
+                topics.add(module.output_type)
+        return topics
+
     def _session_policy(
-        self, client_config: ClientConfig, pipeline: List[Module]
+        self, client_config: ClientConfig, topics: Set[str]
     ) -> EventPolicy:
         """The session's event policy, built from the client's `event_policy`
         settings and checked against the session's topics."""
@@ -149,11 +162,6 @@ class HuRI:
                 f"event_policy {list(settings)} is not accepted by this "
                 f"server's {self.event_policy.__name__}: {e}"
             ) from e
-        topics = {*client_config.send, *client_config.subscribe}
-        for module in pipeline:
-            topics.add(module.input_type)
-            if module.output_type is not None:
-                topics.add(module.output_type)
         policy.check(topics)
         return policy
 
@@ -203,7 +211,14 @@ class HuRI:
                 sent=client_config.send,
                 subscribed=topic_list,
             )
-            policy = self._session_policy(client_config, pipeline)
+            topics = self._session_topics(client_config, pipeline)
+            policy = self._session_policy(client_config, topics)
+            unknown = sorted(set(client_config.latest_only) - topics)
+            if unknown:
+                raise ValueError(
+                    f"latest_only names topics this session does not have: {unknown}; "
+                    f"this session's topics are {sorted(topics)}"
+                )
         except Exception as e:
             await ws.send_json(
                 {
@@ -235,6 +250,7 @@ class HuRI:
             log=client_config.log,
             module_ids=module_ids,
             policy=policy,
+            latest_only=client_config.latest_only,
         )
         logger.info(
             "Client registered with _user_id=%s, config: %s",

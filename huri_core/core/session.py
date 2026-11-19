@@ -31,6 +31,7 @@ class Session:
         log: Optional[LogConfig] = None,
         module_ids: Optional[Mapping[int, Hashable]] = None,
         policy: Optional[EventPolicy] = None,
+        latest_only: Collection[str] = (),
     ) -> None:
         self.event_graph = EventGraph(
             session_id,
@@ -40,6 +41,7 @@ class Session:
             log=log,
             module_ids=module_ids,
             policy=policy,
+            latest_only=latest_only,
         )
 
         for module in modules:

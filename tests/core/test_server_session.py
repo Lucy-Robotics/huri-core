@@ -600,6 +600,10 @@ class LiveSocket(FakeSocket):
         await super().send_json(message)
         self.outbox.put_nowait(message)
 
+    async def send_bytes(self, payload):
+        await super().send_bytes(payload)
+        self.outbox.put_nowait(payload)
+
 
 def streaming_server(event_policy=InterruptPolicy):
     events = {**EVENTS, "toy.token": Word, "toy.stop": Word}
@@ -692,3 +696,69 @@ def test_interrupt_rules_sent_to_a_concurrent_server_are_refused():
 def test_a_concurrent_server_accepts_a_session_without_rules():
     ws = session_on(streaming_server(EventPolicy), FakeSocket(streaming_handshake({})))
     assert ws.sent[0]["type"] == "session_init"
+
+
+# --- latest-only topics -------------------------------------------------------
+
+
+def test_a_latest_only_declaration_naming_an_unknown_topic_is_refused():
+    config = {**streaming_handshake({}), "latest_only": ["toy.wrd"]}
+    ws = session_on(streaming_server(), FakeSocket(config))
+    (reply,) = ws.sent
+    assert reply["type"] == "session_error"
+    assert "toy.wrd" in reply["error"]
+    assert ws.closed == 1008
+
+
+class Slow(Module):
+    """Gated: the first value holds it busy until `release` is set."""
+
+    input_type, output_type = "toy.word", "toy.loud"
+    started: asyncio.Event
+    release: asyncio.Event
+    next_value: asyncio.Event
+    seen: list
+
+    async def process(self, data: Word):
+        self.seen.append(data.text)
+        if len(self.seen) == 1:
+            self.started.set()
+            await self.release.wait()
+        else:
+            self.next_value.set()
+
+
+def test_a_slow_subscriber_gets_only_the_newest_value():
+    async def scenario():
+        Slow.started, Slow.release, Slow.next_value, Slow.seen = (
+            asyncio.Event(),
+            asyncio.Event(),
+            asyncio.Event(),
+            [],
+        )
+        server = Server({"slow": Slow, "reverse": Reverse}, {}, dict(EVENTS), ())
+        config = handshake(
+            {"slow": {"name": "slow"}, "reverse": {"name": "reverse"}},
+            ["toy.reversed"],
+            ["toy.word", "toy.chunk"],
+        )
+        config["latest_only"] = ["toy.word"]
+        ws = LiveSocket(config)
+        task = asyncio.create_task(server.run_session(ws))
+        assert (await ws.outbox.get())["type"] == "session_init"
+        ws.push(word("busy"))
+        await asyncio.wait_for(Slow.started.wait(), 1)
+        for text in ("a", "b", "c"):
+            ws.push(word(text))
+        # Frames are handled in order: the marker's reply proves a, b, c were published.
+        ws.inbox.put_nowait(
+            {"type": "websocket.receive", "bytes": frame("toy.chunk", b"x")}
+        )
+        await asyncio.wait_for(ws.outbox.get(), 1)
+        Slow.release.set()
+        await asyncio.wait_for(Slow.next_value.wait(), 1)
+        ws.push()
+        await task
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=10))
+    assert Slow.seen == ["busy", "c"]
