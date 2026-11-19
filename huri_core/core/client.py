@@ -145,7 +145,9 @@ def _get_modules(url: str, context: Optional[SSLContext], timeout: float) -> Any
         ) from e
     except http.client.HTTPException as e:  # not HTTP, or cut mid-answer
         raise HuRIModulesError(f"{url} did not answer as an HTTP server ({e!r})") from e
-    except OSError as e:  # URLError, refused, timeouts
+    except TimeoutError as e:  # connected, then no answer in time
+        raise HuRIModulesError(f"{url}: the server did not answer in time") from e
+    except OSError as e:  # URLError (refused, connect timeout...)
         reason = getattr(e, "reason", None) or e
         raise HuRIModulesError(f"{url}: the server is unreachable ({reason})") from e
     try:
@@ -163,7 +165,13 @@ async def read_server_modules(
     segment -> `modules`); `ssl` is the TLS context for a private CA."""
 
     url = _modules_url(huri_url)
-    answer = await asyncio.to_thread(_get_modules, url, ssl, timeout)
+    try:
+        # urlopen's timeout is per socket operation: this bounds the whole read.
+        answer = await asyncio.wait_for(
+            asyncio.to_thread(_get_modules, url, ssl, timeout), timeout
+        )
+    except asyncio.TimeoutError as e:
+        raise HuRIModulesError(f"{url}: the server did not answer in time") from e
     if not (
         isinstance(answer, dict)
         and isinstance(answer.get("modules"), list)

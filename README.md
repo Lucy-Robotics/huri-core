@@ -506,7 +506,9 @@ this machine's `user_id`, created once and kept in the user config directory.
 `huri-core[client]`: `modules`, `details[name].input/output` (`output` is
 `None` for a module that emits nothing) and `huri_core`, as the server sends
 them. `ssl=` takes a TLS context (private CA), `timeout=` defaults to 5 s, and
-a failure raises `HuRIModulesError`, whose message names the URL.
+a failure raises `HuRIModulesError`, whose message names the URL. Like any
+`urllib` request, it goes through the `HTTP_PROXY`/`HTTPS_PROXY` of the
+environment (`NO_PROXY` to bypass it).
 huri-modules ships a commented
 [client_template.yaml](https://github.com/Lucy-Robotics/huri-modules/blob/main/config/client_template.yaml).
 [HuRI-CLI](https://github.com/Lucy-Robotics/HuRI-CLI), a separate repository,

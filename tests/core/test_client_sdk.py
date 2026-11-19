@@ -1014,6 +1014,34 @@ def test_an_unreachable_server_is_reported_with_its_url():
     assert "unreachable" in str(exc.value)
 
 
+def _trickle(sock, stop):
+    """Answers with headers, then one body byte every 0.05 s until `stop`."""
+    conn, _ = sock.accept()
+    with conn:
+        conn.recv(1024)
+        conn.sendall(b"HTTP/1.0 200 OK\r\nContent-Length: 1000\r\n\r\n")
+        while not stop.wait(0.05):
+            conn.sendall(b" ")
+
+
+def test_a_server_that_trickles_its_answer_times_out_as_a_whole():
+    stop = threading.Event()
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen()
+        threading.Thread(target=_trickle, args=(sock, stop), daemon=True).start()
+        url = f"ws://127.0.0.1:{sock.getsockname()[1]}/session"
+
+        async def read():
+            try:
+                await read_server_modules(url, timeout=0.3)
+            finally:
+                stop.set()  # lets the reading thread end
+
+        with pytest.raises(HuRIModulesError, match="did not answer in time"):
+            run(read())
+
+
 def test_a_url_that_is_not_a_huri_server_is_reported(modules_server):
     modules_server.status, modules_server.body = 404, b"nope"
     with pytest.raises(HuRIModulesError) as exc:
@@ -1123,4 +1151,4 @@ def test_a_server_that_never_answers_times_out_with_its_url():
         with pytest.raises(HuRIModulesError) as exc:
             run(read_server_modules(f"ws://127.0.0.1:{port}/session", timeout=0.2))
     assert f"http://127.0.0.1:{port}/modules" in str(exc.value)
-    assert "unreachable" in str(exc.value)
+    assert "did not answer in time" in str(exc.value)
