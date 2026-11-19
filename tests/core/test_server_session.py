@@ -418,6 +418,23 @@ def test_a_keyword_only_argument_is_listed():
     assert args[2]["name"] == "b" and args[2]["default"] is None
 
 
+class Opaque(Module):
+    input_type, output_type = "toy.word", None
+    __signature__ = "unreadable"  # inspect.signature raises on it
+
+    async def process(self, data: Word):
+        return None
+
+
+def test_a_module_whose_signature_cannot_be_read_does_not_stop_the_server(
+    serve_log,
+):
+    d = details_of(odd=Opaque, qag=Qag)
+    assert d["odd"]["args"] == [] and d["odd"]["accepts_other_args"] is True
+    assert d["qag"]["args"]
+    assert "Opaque" in serve_log.text
+
+
 def test_a_default_that_is_not_a_plain_json_value_is_not_shown():
     args = {a["name"]: a for a in details_of(dock=Dock)["dock"]["args"]}
     for name in ("pose", "limit"):

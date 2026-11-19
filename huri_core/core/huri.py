@@ -25,10 +25,19 @@ logger = logging.getLogger("ray.serve")
 
 
 def _module_args(module_cls: Type[Module]) -> Dict[str, Any]:
-    """The constructor arguments GET /modules publishes for a module class."""
+    """The constructor arguments GET /modules publishes for a module class.
+
+    Parameters starting with `_` are left out (the server injects those it
+    passes, like `_handle`)."""
+    try:
+        params = inspect.signature(module_cls).parameters.values()
+    except (TypeError, ValueError):
+        # Informative only: an unreadable signature must not stop the server.
+        logger.warning("Cannot read the arguments of %s", module_cls.__name__)
+        return {"args": [], "accepts_other_args": True}
     args: List[Dict[str, Any]] = []
     other = False
-    for p in inspect.signature(module_cls).parameters.values():
+    for p in params:
         if p.kind is p.VAR_KEYWORD:
             # The framework bases forward **kwargs to object, which rejects them.
             other = module_cls.__init__ not in (
