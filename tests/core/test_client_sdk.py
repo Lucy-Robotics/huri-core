@@ -909,3 +909,41 @@ def test_a_client_given_an_event_policy_that_is_not_a_mapping_fails_before_conne
 ):
     with pytest.raises(ValueError, match="event_policy"):
         HuRIClient("ws://127.0.0.1:1", modules={}, event_policy=event_policy)
+
+
+def test_the_handshake_carries_the_latest_only_topics(tmp_path):
+    assert _handshake_of_yaml_client(tmp_path, "latest_only: [acme.gaze]\n")[
+        "latest_only"
+    ] == ["acme.gaze"]
+    client = HuRIClient("ws://127.0.0.1:1", modules={}, latest_only=["acme.gaze"])
+    assert client.handshake()["latest_only"] == ["acme.gaze"]
+
+
+def test_a_client_without_latest_only_topics_sends_no_latest_only_key(tmp_path):
+    assert "latest_only" not in _handshake_of_yaml_client(tmp_path)
+    assert "latest_only" not in HuRIClient("ws://x", modules={}).handshake()
+
+
+def test_the_config_reads_latest_only_as_a_list_of_topics():
+    raw = {"user_id": "u", "modules": {}}
+    assert ClientConfig.from_dict(raw).latest_only == []
+    assert ClientConfig.from_dict({**raw, "latest_only": None}).latest_only == []
+    assert ClientConfig.from_dict({**raw, "latest_only": ["a"]}).latest_only == ["a"]
+
+
+NOT_A_TOPIC_LIST = ["acme.gaze", {"acme.gaze": 1}, 1, False, [1], ["a", None]]
+
+
+@pytest.mark.parametrize("latest_only", NOT_A_TOPIC_LIST)
+def test_latest_only_that_is_not_a_list_of_topics_is_refused_by_the_config(
+    latest_only,
+):
+    raw = {"user_id": "u", "modules": {}, "latest_only": latest_only}
+    with pytest.raises(ValueError, match="latest_only"):
+        ClientConfig.from_dict(raw)
+
+
+@pytest.mark.parametrize("latest_only", NOT_A_TOPIC_LIST)
+def test_a_client_given_bad_latest_only_fails_before_connecting(latest_only):
+    with pytest.raises(ValueError, match="latest_only"):
+        HuRIClient("ws://x", modules={}, latest_only=latest_only)

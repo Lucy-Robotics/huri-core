@@ -196,6 +196,9 @@ first cancels the running tasks that produce the topics listed in the session's
 `event_policy.interrupts` rule for that event, and what they started, then
 dispatches. This is bus cancellation, not a hardware stop. See
 [Interruptions](../README.md#interruptions-the-event-policy).
+A session's top-level `latest_only` topics give each subscriber of them one
+slot that newer values overwrite (`EventGraph(latest_only=...)`), see
+[Latest-only topics](../README.md#latest-only-topics).
 
 ## Building and trusting modules
 

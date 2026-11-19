@@ -109,6 +109,15 @@ class LogConfig:
         )
 
 
+def _latest_only_list(value: Any) -> List[str]:
+    """`latest_only` as a list of topics (None is empty), or ValueError."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(t, str) for t in value):
+        raise ValueError(f"`latest_only` must be a list of topics, not {value!r}")
+    return list(value)
+
+
 @dataclass
 class ClientConfig:
     """A client session, as written in a client YAML and sent to the server as
@@ -120,6 +129,8 @@ class ClientConfig:
     :log: the session's traffic log levels, per module id and per topic.
     :event_policy: the keyword arguments of the server's event policy for this
         session, e.g. {"interrupts": {"acme.stop": ["huri.token"]}}.
+    :latest_only: topics whose busy subscribers get only the newest value
+        (the server refuses the session if one is not a topic of the session).
     """
 
     user_id: str
@@ -129,6 +140,7 @@ class ClientConfig:
     huri_url: str = ""
     log: LogConfig = field(default_factory=LogConfig)
     event_policy: Dict[str, Any] = field(default_factory=dict)
+    latest_only: List[str] = field(default_factory=list)
 
     LEGACY_KEYS = ("interface_path", "senders", "hooks")
 
@@ -158,4 +170,5 @@ class ClientConfig:
                 {} if raw.get("log") is None else raw["log"], modules
             ),
             event_policy=dict(event_policy),
+            latest_only=_latest_only_list(raw.get("latest_only")),
         )
