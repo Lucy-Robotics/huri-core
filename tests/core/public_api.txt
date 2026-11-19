@@ -70,6 +70,8 @@ async def huri_core.core.client.HuRIClient.wait_closed(self) -> None
 async def huri_core.core.client.HuRIClient.send(self, topic: str, event: huri_core.core.events.EventData) -> None
 class huri_core.core.client.HuRISessionError(RuntimeError)
 def huri_core.core.client.HuRISessionError.__init__(self, error: str, server_modules: Optional[List[str]] = None)
+class huri_core.core.client.HuRIModulesError(RuntimeError)
+async def huri_core.core.client.read_server_modules(huri_url: str, *, ssl: Optional[ssl.SSLContext] = None, timeout: float = 5.0) -> Dict[str, Any]
 class huri_core.core.client.ConnectionMessage(object)
 huri_core.core.client.ConnectionMessage: dataclass(status: Literal['connected', 'refused', 'error', 'closed'], detail: str = '', code: Optional[int] = None, server_modules: List[str] = <factory>) -> None
 huri_core.core.client.ConnectionMessage.status: Literal['connected', 'refused', 'error', 'closed']
