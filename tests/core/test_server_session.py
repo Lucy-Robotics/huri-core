@@ -932,3 +932,100 @@ def test_a_slow_subscriber_gets_only_the_newest_value():
 
     asyncio.run(asyncio.wait_for(scenario(), timeout=10))
     assert Slow.seen == ["busy", "c"]
+
+
+class Talker(Module):
+    """Streams two words, holding on `gate` after the first; records what it saw."""
+
+    input_type, output_type = "toy.word", "toy.loud"
+    gate: asyncio.Event
+    log: list
+
+    async def process(self, data: Word):
+        yield Word("first")
+        try:
+            await self.gate.wait()
+        except asyncio.CancelledError:
+            self.log.append("stream cancelled")
+            raise
+        yield Word("second")
+
+    async def finalize(self):
+        self.log.append("finalized")
+
+
+def disconnect_mid_stream():
+    """Run a session whose client leaves while Talker is mid-stream."""
+    log: list = []
+    gate = asyncio.Event()
+    talker = type("T", (Talker,), {"gate": gate, "log": log})
+    ws = FakeSocket(
+        handshake({"a": {"name": "talker"}}, ["toy.loud"], ["toy.word"]),
+        json.dumps({"topic": "toy.word", "data": {"text": "hi"}}),
+    )
+    server = Server({"talker": talker}, {}, dict(EVENTS), ())
+
+    async def run():
+        await asyncio.wait_for(server.run_session(ws), timeout=10)
+        gate.set()  # a live stream would now emit "second"
+        for _ in range(10):  # a bounded drain: nothing more may be sent
+            await asyncio.sleep(0)
+
+    asyncio.run(run())
+    return ws, log
+
+
+def test_running_streams_are_cancelled_when_the_client_disconnects():
+    ws, log = disconnect_mid_stream()
+    assert "stream cancelled" in log
+    assert ws.sent == [
+        {"type": "session_init", "user_id": "u1"},
+        {"topic": "toy.loud", "data": {"text": "first"}},
+    ]
+
+
+def test_modules_are_still_finalized_after_the_cancellation():
+    _, log = disconnect_mid_stream()
+    assert log == ["stream cancelled", "finalized"]
+
+
+def test_a_module_ignoring_the_cancellation_does_not_block_finalize(
+    monkeypatch, caplog
+):
+    monkeypatch.setattr("huri_core.core.bus.CANCEL_TIMEOUT_S", 0.05)
+    log: list = []
+    release = asyncio.Event()
+
+    class Stubborn(Module):
+        input_type, output_type = "toy.word", "toy.loud"
+
+        async def process(self, data: Word):
+            yield Word("first")
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await release.wait()  # swallows the cancellation
+
+        async def finalize(self):
+            log.append("finalized")
+
+    ws = FakeSocket(
+        handshake({"a": {"name": "stubborn"}}, ["toy.loud"], ["toy.word"]),
+        json.dumps({"topic": "toy.word", "data": {"text": "hi"}}),
+    )
+    server = Server({"stubborn": Stubborn}, {}, dict(EVENTS), ())
+
+    async def run():
+        await asyncio.wait_for(server.run_session(ws), timeout=10)
+        release.set()  # let the stuck task end, so asyncio.run can close
+
+    bus_logger = logging.getLogger("ray.serve")
+    bus_logger.addHandler(caplog.handler)  # Ray may stop it propagating to root
+    try:
+        with caplog.at_level(logging.WARNING, logger="ray.serve"):
+            asyncio.run(run())
+    finally:
+        bus_logger.removeHandler(caplog.handler)
+
+    assert log == ["finalized"]
+    assert "stubborn (no distribution) ignored cancellation" in caplog.text
