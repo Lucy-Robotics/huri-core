@@ -16,14 +16,21 @@ needs that); different topics run concurrently. A handler registered with
 `concurrent=True` opts out: it starts on each event without waiting for its own
 earlier calls or for the topic's ordered handlers (close() cancels the calls
 still running). A failing handler is logged and does not stop the others.
+
+`read_server_modules(huri_url)` reads the modules a server enabled (GET
+/modules) before any session, with only the standard library.
 """
 
 import asyncio
+import http.client
 import json
 import logging
 import struct
+import urllib.error
+import urllib.request
 import uuid
 from dataclasses import dataclass, field
+from ssl import SSLContext  # not `import ssl`: the `ssl=` parameter shadows it
 from typing import (
     Any,
     Awaitable,
@@ -38,6 +45,7 @@ from typing import (
     Type,
     TypeVar,
 )
+from urllib.parse import urlsplit, urlunsplit
 
 import websockets
 from omegaconf import OmegaConf
@@ -59,6 +67,10 @@ class HuRISessionError(RuntimeError):
         self.error = error
         self.server_modules = server_modules or []
         super().__init__(error)
+
+
+class HuRIModulesError(RuntimeError):
+    """The server's modules could not be read; the message names the URL."""
 
 
 ConnectionStatus = Literal["connected", "refused", "error", "closed"]
@@ -97,6 +109,68 @@ def load_raw_client_config(path: str) -> Dict[str, Any]:
 
 def load_client_config(path: str) -> ClientConfig:
     return ClientConfig.from_dict(load_raw_client_config(path))
+
+
+def _modules_url(huri_url: str) -> str:
+    """ws -> http, wss -> https, last path segment -> `modules`; host, port and
+    path prefix kept; query and userinfo (a password) dropped."""
+
+    parts = urlsplit(huri_url)
+    scheme = {"ws": "http", "wss": "https", "http": "http", "https": "https"}.get(
+        parts.scheme
+    )
+    try:
+        host, port = parts.hostname, parts.port
+    except ValueError:  # non-numeric port
+        host = port = None
+    if scheme is None or not host:
+        raise HuRIModulesError(
+            f"{huri_url}: not a websocket or HTTP URL (ws, wss, http or https)"
+        )
+    netloc = f"[{host}]" if ":" in host else host
+    if port:
+        netloc += f":{port}"
+    path = parts.path.rstrip("/").rsplit("/", 1)[0] + "/modules"
+    return urlunsplit((scheme, netloc, path, "", ""))
+
+
+def _get_modules(url: str, context: Optional[SSLContext], timeout: float) -> Any:
+    try:
+        with urllib.request.urlopen(url, context=context, timeout=timeout) as res:
+            body = res.read()
+    except urllib.error.HTTPError as e:  # before URLError, its parent
+        e.close()
+        raise HuRIModulesError(
+            f"{url} answered {e.code} {e.reason}: is it a HuRI server?"
+        ) from e
+    except http.client.HTTPException as e:  # not HTTP, or cut mid-answer
+        raise HuRIModulesError(f"{url} did not answer as an HTTP server ({e!r})") from e
+    except OSError as e:  # URLError, refused, timeouts
+        reason = getattr(e, "reason", None) or e
+        raise HuRIModulesError(f"{url}: the server is unreachable ({reason})") from e
+    try:
+        return json.loads(body)
+    except ValueError as e:
+        raise HuRIModulesError(f"{url}: the answer does not list modules") from e
+
+
+async def read_server_modules(
+    huri_url: str, *, ssl: Optional[SSLContext] = None, timeout: float = 5.0
+) -> Dict[str, Any]:
+    """What a server enabled, from its GET /modules: `modules` (names),
+    `details[name]` (input, output...) and `huri_core` (its version), as sent.
+    `huri_url` is the session URL (ws -> http, wss -> https, last path
+    segment -> `modules`); `ssl` is the TLS context for a private CA."""
+
+    url = _modules_url(huri_url)
+    answer = await asyncio.to_thread(_get_modules, url, ssl, timeout)
+    if not (
+        isinstance(answer, dict)
+        and isinstance(answer.get("modules"), list)
+        and isinstance(answer.get("details"), dict)
+    ):
+        raise HuRIModulesError(f"{url}: the answer does not list modules")
+    return answer
 
 
 def encode(topic: str, event: EventData) -> str | bytes:

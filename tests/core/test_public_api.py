@@ -32,6 +32,8 @@ PUBLIC = {
     "huri_core.core.client": [
         "HuRIClient",
         "HuRISessionError",
+        "HuRIModulesError",
+        "read_server_modules",
         "ConnectionMessage",  # its `status` records the ConnectionStatus values
         "load_raw_client_config",
         "load_client_config",

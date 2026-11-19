@@ -501,6 +501,12 @@ sends and receives at `DEBUG` on the `huri.client` logger, filtered by the
 `load_client_config(path)` and turned into a client with
 `HuRIClient.from_config(...)`; `load_client_config` also gives the session
 this machine's `user_id`, created once and kept in the user config directory.
+`await read_server_modules(huri_url)` reads a server's enabled modules (its
+`GET /modules`) before any session, from the same session URL, with only
+`huri-core[client]`: `modules`, `details[name].input/output` (`output` is
+`None` for a module that emits nothing) and `huri_core`, as the server sends
+them. `ssl=` takes a TLS context (private CA), `timeout=` defaults to 5 s, and
+a failure raises `HuRIModulesError`, whose message names the URL.
 huri-modules ships a commented
 [client_template.yaml](https://github.com/Lucy-Robotics/huri-modules/blob/main/config/client_template.yaml).
 [HuRI-CLI](https://github.com/Lucy-Robotics/HuRI-CLI), a separate repository,
