@@ -54,6 +54,10 @@ cut releases:
    it also turns the documented ranges (README's examples and Versioning
    section) from `>=0.X.0.dev0,<0.(X+1)` into `>=0.X,<0.(X+1)`.
 2. Merge it, then open the PR from `dev` into `main` named `Release X.Y.Z`.
+   `main` takes pull requests from `dev` only (the Release check fails
+   otherwise), merged with a merge commit, the only method its ruleset
+   allows: `dev` then always contains `main`, and the next release PR cannot
+   conflict.
    Its **Release** check (`.github/workflows/release.yml`) fails when the
    release would be wrong: a pre-release version, or a version already tagged
    or on PyPI. Its job summary says what merging will publish, and the sdist

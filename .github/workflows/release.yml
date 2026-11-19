@@ -41,6 +41,17 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       previous: ${{ steps.plan.outputs.previous }}
     steps:
+      # dev must always contain main: a PR from another branch, squashed into
+      # main, made the next release PR conflict (huri-core #135).
+      - name: a pull request into main comes from dev
+        if: github.event_name == 'pull_request'
+        env:
+          HEAD: ${{ github.head_ref }}
+        run: |
+          if [ "$HEAD" != dev ]; then
+            echo "::error::Only dev is merged into main, not '$HEAD': open this pull request on dev."
+            exit 1
+          fi
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0  # the tags and the previous release, for the checks
