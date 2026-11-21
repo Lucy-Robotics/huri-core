@@ -24,6 +24,17 @@ class EventData(Generic[WireT]):
         return f"{cls}({self!r})"
 
 
+def _safe_summary(event: EventData) -> str:
+    """
+    summarize() for logging, which must never be able to drop an event.
+    """
+
+    try:
+        return event.summarize()
+    except Exception:  # noqa: BLE001 - logging must not raise
+        return f"<{type(event).__name__} summarize() failed>"
+
+
 @dataclass
 class JsonEvent(EventData[Mapping[str, Any]]):
     @classmethod

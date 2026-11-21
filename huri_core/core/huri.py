@@ -1,8 +1,9 @@
+import inspect
 import json
 import logging
 import struct
 import uuid
-from typing import Any, Dict, Iterable, List, Type
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Type
 
 from fastapi import WebSocket, WebSocketDisconnect
 from ray import serve
@@ -11,7 +12,9 @@ from ray.serve import handle
 import huri_core
 from huri_core.core.compat import check_session
 from huri_core.core.factory import EventData, EventDataFactory, Module, ModuleFactory
-from huri_core.core.plugins import installed_modules
+from huri_core.core.module import ModuleWithHandle, ModuleWithId
+from huri_core.core.plugins import installed_modules, module_label
+from huri_core.core.policy import EventPolicy, InterruptPolicy
 from huri_core.core.sender import Sender
 
 from .app import app
@@ -19,6 +22,52 @@ from .dataclasses.config import ClientConfig
 from .session import Session
 
 logger = logging.getLogger("ray.serve")
+
+
+def _module_args(module_cls: Type[Module]) -> Dict[str, Any]:
+    """The constructor arguments GET /modules publishes for a module class.
+
+    Parameters starting with `_` are left out (the server injects those it
+    passes, like `_handle`)."""
+    try:
+        params = inspect.signature(module_cls).parameters.values()
+    except (TypeError, ValueError):
+        # Informative only: an unreadable signature must not stop the server.
+        logger.warning("Cannot read the arguments of %s", module_cls.__name__)
+        return {"args": [], "accepts_other_args": True}
+    args: List[Dict[str, Any]] = []
+    other = False
+    for p in params:
+        if p.kind is p.VAR_KEYWORD:
+            # The framework bases forward **kwargs to object, which rejects them.
+            other = module_cls.__init__ not in (
+                ModuleWithHandle.__init__,
+                ModuleWithId.__init__,
+            )
+        elif p.name.startswith("_") or p.kind in (p.VAR_POSITIONAL, p.POSITIONAL_ONLY):
+            continue
+        else:
+            a = p.annotation
+            if a is p.empty:
+                type_name = None
+            elif isinstance(a, str):
+                type_name = a
+            else:
+                type_name = inspect.formatannotation(a)
+            arg: Dict[str, Any] = {
+                "name": p.name,
+                "type": type_name,
+                "required": p.default is p.empty,
+            }
+            if p.default is not p.empty:
+                try:
+                    # Starlette's own rule: NaN/inf would otherwise be a 500.
+                    json.dumps(p.default, allow_nan=False)
+                    arg["default"] = p.default
+                except (TypeError, ValueError):
+                    pass
+            args.append(arg)
+    return {"args": args, "accepts_other_args": other}
 
 
 @serve.deployment
@@ -40,13 +89,34 @@ class HuRI:
         handles: Dict[str, handle.DeploymentHandle],
         events: Dict[str, Type[EventData]],
         actuating: Iterable[str],
+        distributions: Optional[Dict[str, Tuple[Optional[str], Optional[str]]]] = None,
+        event_policy: Type[EventPolicy] = InterruptPolicy,
     ) -> None:
         """:actuating: the enabled modules that may drive hardware, as the
         startup checks found them (class attribute or manifest, and opted in).
         Only reported by GET /modules: the checks already ran in build_app().
         Required, not defaulted: a binder that forgot it would report a servo
         as `actuation: false`. Informational only: the operator opt-in
-        (HURI_ACTUATION_MODULES) is the safety gate, never this flag."""
+        (HURI_ACTUATION_MODULES) is the safety gate, never this flag.
+
+        :distributions: (distribution, version) of each module by name, from
+        the loader; absent or (None, None) for an import-path module.
+
+        :event_policy: the EventPolicy class (HURI_EVENT_POLICY); each session
+        gets its own instance."""
+        dists = {n: (distributions or {}).get(n, (None, None)) for n in modules}
+        actuating = set(actuating)
+        # A Serve replica's root logger has no handler and level WARNING: unless
+        # the operator routed `huri.audit`, send it where ray.serve logs go.
+        audit = logging.getLogger("huri.audit")
+        if not audit.handlers:
+            # shortcut: handler objects are copied once, so they go stale if Serve
+            # reconfigures its logging after start (a logging_config update);
+            # re-copy then.
+            serve_logger = logging.getLogger("ray.serve")
+            for h in serve_logger.handlers:
+                audit.addHandler(h)
+            audit.setLevel(logging.INFO)
         self.module_factory = ModuleFactory(handles, installed=installed_modules())
         self.event_factory = EventDataFactory()
         for name, module_cls in modules.items():
@@ -59,11 +129,18 @@ class HuRI:
             event_cls = events.pop(module_cls.output_type, None)
             self.event_factory.register(module_cls.output_type, event_cls)
 
+        self.event_policy = event_policy
         self.clients: Dict[str, Session] = {}
+
+        # shortcut: labels are keyed by class, so a class enabled under two
+        # names (entry point + import path) gets one label; key by name if needed.
+        self.labels = {
+            cls: module_label(name, *dists[name]) for name, cls in modules.items()
+        }
+        self.audited = {cls for name, cls in modules.items() if name in actuating}
 
         # Fixed at startup: GET /modules only reads it, it never imports or
         # instantiates a module.
-        actuating = set(actuating)
         self.modules_info: Dict[str, Any] = {
             "modules": self.module_factory.registered(),
             "details": {
@@ -71,6 +148,9 @@ class HuRI:
                     "input": module_cls.input_type,
                     "output": module_cls.output_type,
                     "actuation": name in actuating,
+                    "distribution": dists[name][0],
+                    "version": dists[name][1],
+                    **_module_args(module_cls),
                 }
                 for name, module_cls in sorted(modules.items())
             },
@@ -87,7 +167,12 @@ class HuRI:
                 "modules": ["stt", "vad"],
                 "details": {
                     "stt": {"input": "huri.voice", "output": "huri.transcript",
-                            "actuation": false},
+                            "actuation": false,
+                            "distribution": "huri-module-stt",
+                            "version": "0.3.1",
+                            "args": [{"name": "language", "type": "str",
+                                      "required": false, "default": "en"}],
+                            "accepts_other_args": false},
                     ...
                 },
                 "huri_core": "0.4.0"
@@ -95,10 +180,49 @@ class HuRI:
 
         `output` is null for a module that emits nothing; `actuation` is true
         for a module that may drive hardware (opted in by its operator), for
-        information only. `huri_core` is the PEP 440 version string (a dev
+        information only. `distribution` and `version` name the installed
+        package providing the module, both null for an import-path module.
+        `args` lists the constructor arguments in declaration order: `type` is
+        null if undeclared; `required` means no default; `default` is absent
+        when required or not a plain JSON value (a str default is published
+        as-is); arguments starting with `_` (injected by the server) are not
+        listed. `accepts_other_args` is true for a `**kwargs` in the module's own
+        constructor signature (one that only forwards it to its base still
+        reports true).
+        `huri_core` is the PEP 440 version string (a dev
         build reports e.g. "0.4.0.dev0").
         """
         return self.modules_info
+
+    @staticmethod
+    def _session_topics(
+        client_config: ClientConfig, pipeline: List[Module]
+    ) -> Set[str]:
+        """Every topic of the session: the module input and output topics plus
+        the client's send and subscribe topics."""
+        topics = {*client_config.send, *client_config.subscribe}
+        for module in pipeline:
+            topics.add(module.input_type)
+            if module.output_type is not None:
+                topics.add(module.output_type)
+        return topics
+
+    def _session_policy(
+        self, client_config: ClientConfig, topics: Set[str]
+    ) -> EventPolicy:
+        """The session's event policy, built from the client's `event_policy`
+        settings and checked against the session's topics."""
+        settings = client_config.event_policy
+        try:
+            policy = self.event_policy(**settings)
+        except TypeError as e:
+            # The bare TypeError may not name the key ("takes no arguments").
+            raise ValueError(
+                f"event_policy {list(settings)} is not accepted by this "
+                f"server's {self.event_policy.__name__}: {e}"
+            ) from e
+        policy.check(topics)
+        return policy
 
     @app.websocket("/session")
     async def run_session(self, ws: WebSocket):
@@ -146,6 +270,14 @@ class HuRI:
                 sent=client_config.send,
                 subscribed=topic_list,
             )
+            topics = self._session_topics(client_config, pipeline)
+            policy = self._session_policy(client_config, topics)
+            unknown = sorted(set(client_config.latest_only) - topics)
+            if unknown:
+                raise ValueError(
+                    f"latest_only names topics this session does not have: {unknown}; "
+                    f"this session's topics are {sorted(topics)}"
+                )
         except Exception as e:
             await ws.send_json(
                 {
@@ -159,13 +291,26 @@ class HuRI:
             logger.warning("[HuRI] rejected session for %s: %s", user, e)
             return
 
-        senders: List[Module] = [Sender(ws, topic) for topic in topic_list]
+        senders: List[Module] = [
+            Sender(ws, topic, client_config.log) for topic in topic_list
+        ]
         modules: List[Module] = pipeline + senders
 
         await ws.send_json({"type": "session_init", "user_id": client_config.user_id})
 
         session_id = str(uuid.uuid4())
-        self.clients[session_id] = Session(modules)
+        module_ids = {id(m): mid for mid, m in zip(client_config.modules, pipeline)}
+        self.clients[session_id] = Session(
+            modules,
+            session_id,
+            client_config.user_id,
+            self.labels,
+            self.audited,
+            log=client_config.log,
+            module_ids=module_ids,
+            policy=policy,
+            latest_only=client_config.latest_only,
+        )
         logger.info(
             "Client registered with _user_id=%s, config: %s",
             client_config.user_id,
@@ -180,20 +325,27 @@ class HuRI:
                     if msg["type"] == "websocket.disconnect":
                         raise WebSocketDisconnect()
 
-                    if "bytes" in msg:
-                        msg_bytes = msg["bytes"]
-                        topic_len = struct.unpack("!H", msg_bytes[:2])[0]
-
-                        topic = msg_bytes[2 : 2 + topic_len].decode()
-                        data = msg_bytes[2 + topic_len :]
-                    else:
-                        msg_text = msg["text"]
-                        event = json.loads(msg_text)
-                        topic = event["topic"]
-                        data = event["data"]  # TODO client/server one function
-
                     try:
+                        if "bytes" in msg:
+                            msg_bytes = msg["bytes"]
+                            topic_len = struct.unpack("!H", msg_bytes[:2])[0]
+
+                            topic = msg_bytes[2 : 2 + topic_len].decode()
+                            data = msg_bytes[2 + topic_len :]
+                        else:
+                            msg_text = msg["text"]
+                            event = json.loads(msg_text)
+                            topic = event["topic"]
+                            data = event["data"]  # TODO client/server one function
+
                         event_data = self.event_factory.create(topic, data)
+                    except (KeyError, TypeError, ValueError, struct.error) as e:
+                        logger.warning(
+                            "[HuRI] client %s: dropping malformed frame: %r",
+                            client_config.user_id,
+                            e,
+                        )
+                        continue
                     except RuntimeError as e:
                         logger.warning(
                             "[HuRI] client %s: dropping frame on topic %r: %s. "
@@ -217,6 +369,11 @@ class HuRI:
         try:
             await receive_loop(self.clients[session_id], ws)
         finally:
+            # Stop the running work first: it would publish to a closed socket.
+            try:
+                await self.clients[session_id].event_graph.cancel_all()
+            except Exception:
+                logger.exception("[HuRI] cancelling session work failed")
             # Persist per-session state (e.g. conversation memory) on disconnect.
             for module in modules:
                 fin = getattr(module, "finalize", None)

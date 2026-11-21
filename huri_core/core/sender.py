@@ -1,8 +1,10 @@
 import logging
 import struct
+from typing import Optional
 
 from fastapi import WebSocket
 
+from huri_core.core.dataclasses.config import LogConfig
 from huri_core.core.events import EventData
 from huri_core.core.module import Module
 
@@ -24,13 +26,17 @@ class Sender(Module):
 
     output_type = None
 
-    def __init__(self, ws: WebSocket, type: str):
+    def __init__(self, ws: WebSocket, type: str, log: Optional[LogConfig] = None):
         super().__init__()
+        self._log = log or LogConfig()
         self.ws: WebSocket = ws
         self.input_type = type
 
     async def process(self, data: EventData):
-        logger.info("[Sender:%s] received %s", self.input_type, type(data).__name__)
+        if logger.isEnabledFor(logging.INFO) and self._log.allows(
+            logging.INFO, self.input_type
+        ):
+            logger.info("[Sender:%s] received %s", self.input_type, type(data).__name__)
 
         wire = data.to_wire()
         if isinstance(wire, bytes):

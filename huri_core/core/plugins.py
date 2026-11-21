@@ -23,14 +23,16 @@ import importlib.util
 import re
 from importlib.metadata import EntryPoint, entry_points
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Type
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple, Type
 
 from .events import EventData
 from .manifest import MANIFEST_FILE, ModuleManifest, loads_manifest
 from .module import Module
+from .policy import EventPolicy, InterruptPolicy
 
 MODULES_GROUP = "huri.modules"
 EVENTS_GROUP = "huri.events"
+EVENT_POLICIES_GROUP = "huri.event_policies"
 
 CURATED_NAMESPACE = "huri"
 # The only distribution allowed to register `huri.*` topics.
@@ -45,6 +47,23 @@ class PluginError(RuntimeError):
 def _dist(ep: EntryPoint) -> str:
     dist = getattr(ep, "dist", None)
     return dist.name if dist is not None else "<unknown distribution>"
+
+
+def module_distribution(name: str) -> Tuple[Optional[str], Optional[str]]:
+    """(distribution, version) providing the `huri.modules` entry point `name`;
+    (None, None) for an import path or an entry point without distribution."""
+
+    ep = _entry_points(MODULES_GROUP).get(name)
+    dist = getattr(ep, "dist", None)
+    if dist is None:
+        return None, None
+    return dist.name, dist.version
+
+
+def module_label(name: str, dist: Optional[str], version: Optional[str]) -> str:
+    """How logs name a module: "stt (huri-module-stt 0.3.1)"."""
+
+    return f"{name} ({dist} {version})" if dist else f"{name} (no distribution)"
 
 
 def _normalize(dist: str) -> str:
@@ -223,6 +242,69 @@ def load_events() -> Dict[str, Type[EventData]]:
             )
         events[topic] = obj
     return events
+
+
+# --- event policies ------------------------------------------------------------
+
+BUILT_IN_POLICIES: Dict[str, Type[EventPolicy]] = {
+    "concurrent": EventPolicy,
+    "interrupt": InterruptPolicy,
+}
+
+
+def _policy_entry_points() -> Dict[str, EntryPoint]:
+    """Installed event policy entry points; one reusing a built-in name is an
+    error, not a silent override."""
+
+    found = _entry_points(EVENT_POLICIES_GROUP)
+    clash = sorted(BUILT_IN_POLICIES.keys() & found.keys())
+    if clash:
+        raise PluginError(
+            f"{EVENT_POLICIES_GROUP} entry point {clash[0]!r} (from "
+            f"{_dist(found[clash[0]])}) reuses the name of a built-in policy"
+        )
+    return found
+
+
+def installed_event_policies() -> List[str]:
+    """Names of every available event policy: built-ins and entry points."""
+
+    return sorted({*BUILT_IN_POLICIES, *_policy_entry_points()})
+
+
+def _policy_class(obj: Any, origin: str) -> Type[EventPolicy]:
+    if not (isinstance(obj, type) and issubclass(obj, EventPolicy)):
+        raise PluginError(
+            f"{origin} does not point to an EventPolicy subclass: {obj!r}"
+        )
+    return obj
+
+
+def load_event_policy(name: Optional[str]) -> Type[EventPolicy]:
+    """The event policy class the server runs (HURI_EVENT_POLICY): a built-in
+    name, an entry point name or an import path. None or empty: "interrupt"."""
+
+    available = _policy_entry_points()
+    if not name:
+        return InterruptPolicy
+    if is_import_path(name):
+        return _policy_class(import_object(name), name)
+    if name in BUILT_IN_POLICIES:
+        return BUILT_IN_POLICIES[name]
+    if name not in available:
+        raise PluginError(
+            f"HURI_EVENT_POLICY names unknown event policy {name!r}. "
+            f"Installed event policies: {installed_event_policies()}"
+        )
+    ep = available[name]
+    try:
+        obj = ep.load()
+    except Exception as e:
+        raise PluginError(
+            f"event policy {name!r} ({ep.value}, from {_dist(ep)}) failed to "
+            f"import: {type(e).__name__}: {e}"
+        ) from e
+    return _policy_class(obj, f"event policy {name!r} ({ep.value})")
 
 
 # --- manifests (huri_module.toml) ----------------------------------------------

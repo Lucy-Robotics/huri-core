@@ -138,3 +138,32 @@ jobs:
           assert "huri_core/py.typed" in files, "py.typed is not shipped"
           print("huri-core", huri_core.__version__, "-", len(files), "files")
           PY
+
+  bench:
+    name: benchmarks vs the base branch (non-blocking)
+    # `make bench-compare`: the pull request's benchmarks run on the base
+    # branch's huri_core and on the pull request's, the table goes to the job
+    # summary and a mean more than 25% slower fails the job. Non-blocking until
+    # its noise on shared runners is known. If the base lacks an API a newer
+    # benchmark uses, the base run fails: acceptable while non-blocking.
+    # It also compares the pull request with the last X.Y.Z tag, report only:
+    # the cost merged since the release, which a base comparison never shows.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -c constraints.txt -e ".[server,client,dev]"
+      - run: git fetch --depth=1 origin "$BASE_REF"
+        env:
+          BASE_REF: ${{ github.base_ref }}
+      - name: the base, and the last release (report only)
+        run: |
+          base=$(git rev-parse FETCH_HEAD)
+          git fetch --depth=1 origin 'refs/tags/*:refs/tags/*'
+          release=$(git tag --list --sort=-v:refname | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          make bench-compare BASE="$base" RELEASE="$release" SUMMARY="$GITHUB_STEP_SUMMARY"

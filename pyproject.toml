@@ -41,6 +41,7 @@ dev = [
   "mypy==1.20.2",
   "pytest==9.0.3",
   "pytest-asyncio==1.4.0",
+  "pytest-benchmark==5.3.1",
   "pytest-cov==7.1.0",
   # The tests read manifests and requirements, which only the server needs at
   # runtime: CI's client job installs [client,dev].
@@ -111,3 +112,5 @@ exclude = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+# Benchmarks are slow and noisy: only `make bench` runs them.
+addopts = "--ignore=tests/benchmarks"

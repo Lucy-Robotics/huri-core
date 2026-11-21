@@ -145,3 +145,10 @@ def test_import_path_cannot_skip_a_packaged_modules_actuation_declaration(
     manifests = {path: plugins.find_manifest(path)}  # what build_app collects
     with pytest.raises(CompatibilityError, match="HURI_ACTUATION_MODULES"):
         check_actuation({path: Arm}, manifests, opted_in=[])
+
+
+def test_unknown_policy_refuses_to_start(tmp_path):
+    pytest.importorskip("ray.serve", reason="builds the app: huri-core[server]")
+    refused = build_app(tmp_path, HURI_EVENT_POLICY="round-robbin")
+    assert refused.returncode != 0
+    assert "round-robbin" in refused.stderr

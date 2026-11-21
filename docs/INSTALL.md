@@ -181,7 +181,7 @@ And local websites, on the machine that runs the server:
 |---|---|
 | <http://127.0.0.1:8265> | Ray's dashboard: deployments, replicas, logs, CPU and memory |
 | <http://127.0.0.1:8000/docs> | the server's HTTP API, to read and try |
-| <http://127.0.0.1:8000/modules> | the modules this server enabled, with their input and output topics (JSON) |
+| <http://127.0.0.1:8000/modules> | the modules this server enabled, with their input and output topics and their arguments (JSON) |
 | <http://127.0.0.1:8000/-/healthz> | Ray's HTTP proxy only: it answers `success` even when every deployment is dead, so trust `serve status` instead |
 
 The pipeline of path 1 adds:
@@ -271,8 +271,10 @@ them yourself only to override it, or when you write the config by hand.
 
 | Variable | Default | Effect |
 |---|---|---|
+| `HURI_EVENT_POLICY` | `interrupt` | the event policy class: `interrupt`, `concurrent` (no interrupt rules accepted), an entry point name from the `huri.event_policies` group, or an import path. An unknown name stops the server. See [Interruptions](../README.md#interruptions-the-event-policy) |
 | `HURI_MODULES` | unset: no module is enabled, every session is refused | comma-separated allow-list of the modules this server registers: entry point names (`stt,rag,tts`) or import paths (`my_pkg.servo:Servo`) |
-| `HURI_ACTUATION_MODULES` | unset | the modules allowed to move hardware. A module that declares actuation must be listed here as well as in `HURI_MODULES` |
+| `HURI_PUBLISH_LOG_WINDOW_S` | `1` | how often, in seconds, a topic's `publish` line is logged; the publishes in between are counted on the next line. `0` logs every publish, at a cost on high-rate topics such as microphone audio. Not a number `>= 0`: the server does not start |
+| `HURI_ACTUATION_MODULES` | unset | the modules allowed to move hardware. A module that declares actuation must be listed here as well as in `HURI_MODULES`. Any client that can reach `/session` can then use it: keep the server on a private network or behind an authenticating proxy |
 
 **Installer (huri-modules `install.sh`)**
 

@@ -8,8 +8,11 @@ from huri_core.core.factory import bind_deployment_handles
 from huri_core.core.huri import HuRI
 from huri_core.core.plugins import (
     find_manifest,
+    load_event_policy,
     load_events,
     load_modules,
+    module_distribution,
+    module_label,
     parse_selection,
 )
 
@@ -25,8 +28,12 @@ def build_app() -> Application:
     # installed package can provide one. huri-modules' installer and serve
     # configs set it.
     modules = load_modules(parse_selection(os.environ.get("HURI_MODULES")))
+    distributions = {name: module_distribution(name) for name in modules}
     if modules:
-        logger.info("[HuRI] enabled modules (HURI_MODULES): %s", sorted(modules))
+        logger.info(
+            "[HuRI] enabled modules (HURI_MODULES): %s",
+            ", ".join(module_label(n, *distributions[n]) for n in sorted(modules)),
+        )
     else:
         logger.warning(
             "[HuRI] HURI_MODULES is unset or empty: no module is enabled and every "
@@ -57,9 +64,13 @@ def build_app() -> Application:
             "(opted in by HURI_ACTUATION_MODULES)",
             actuating,
         )
+    # Unknown or broken policy: refuse to start, before anything is deployed.
+    policy_name = os.environ.get("HURI_EVENT_POLICY") or "interrupt"
+    event_policy = load_event_policy(policy_name)
+    logger.info("[HuRI] event policy: %s (%s)", policy_name, event_policy.__name__)
     handles = bind_deployment_handles(modules)
     app: Application = HuRI.bind(  # type: ignore[attr-defined]
-        modules, handles, events, actuating
+        modules, handles, events, actuating, distributions, event_policy
     )
     return app
 

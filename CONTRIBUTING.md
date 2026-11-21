@@ -12,7 +12,7 @@ change, and open the issue or pull request there.
 | Change the hub (`huri hub`), the registry's format or its checker | [huri-modules](https://github.com/Lucy-Robotics/huri-modules) ([issues](https://github.com/Lucy-Robotics/huri-modules/issues)) | pull request on `dev` to `packages/huri-hub` (the registry parser lives there; `check_registry.py` reuses it), with tests; bump the package's version |
 | Change install or deployment | [huri-modules](https://github.com/Lucy-Robotics/huri-modules) | pull request on `dev`; CI plans the installer on three distros (`ci.yml`); a change to `deploy/` or `packages/` also builds the base image and runs a session against it (`docker.yml`); the GPU images and a real install run on demand (`docker.yml`'s `gpu_images`, `install.yml`) |
 | Change the framework (bus, server, SDK, loader, the `huri` command dispatcher) | [huri-core](https://github.com/Lucy-Robotics/huri-core) ([issues](https://github.com/Lucy-Robotics/huri-core/issues)) | pull request on `dev`; mind the public surface and semver ([RELEASING.md](RELEASING.md)) |
-| Fix or improve the reference client (`huri-cli`), its example configs or the `huri` metapackage | [HuRI-CLI](https://github.com/Lucy-Robotics/HuRI-CLI) ([issues](https://github.com/Lucy-Robotics/HuRI-CLI/issues)) | pull request on `dev`, with tests; CI runs pytest and lint on Python 3.10–3.12 against `huri-core` and `huri-modules` `dev` |
+| Fix or improve the reference client (`huri-cli`) or its example configs | [HuRI-CLI](https://github.com/Lucy-Robotics/HuRI-CLI) ([issues](https://github.com/Lucy-Robotics/HuRI-CLI/issues)) | pull request on `dev`, with tests; CI runs pytest and lint on Python 3.10–3.12 against `huri-core` and `huri-modules` `dev` |
 | Improve the module starter | [huri-plugin-template](https://github.com/Lucy-Robotics/huri-plugin-template) | pull request on `dev` |
 | Improve the HuRI-wide pages (the README's ecosystem section, this file, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)) | [huri-core](https://github.com/Lucy-Robotics/huri-core) | pull request on `dev`; CI runs `python scripts/check_links.py` |
 | Fix or improve a use case (InMoov, the acceptance test site, ...) | its own repository, e.g. [HuRI-Lucy](https://github.com/Lucy-Robotics/HuRI-Lucy) | that repository's own process |
@@ -83,7 +83,9 @@ and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#versions-and-how-a-core-change-p
 5. **Open a pull request to `dev`** and fill in its template: what changes and
    why, the issue it closes (`Closes #58`) and how you tested it.
 6. **CI must pass.** Every repository runs it on each push and pull request,
-   and `dev` and `main` refuse a merge while a required check fails.
+   and `dev` and `main` refuse a merge while a required check fails. On a
+   pull request from a first-time contributor's fork, CI waits until a
+   maintainer approves the run.
 7. **Another person approves.** Every pull request into `dev` or `main` needs
    the approval of a maintainer who is not its author, and a new push
    dismisses an earlier approval. Nobody merges their own work unreviewed,

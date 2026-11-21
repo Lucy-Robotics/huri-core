@@ -21,4 +21,13 @@ check:
 	$(MAKE) --no-print-directory test || rc=1; \
 	exit $$rc
 
-.PHONY: lint test check
+bench:
+	pytest tests/benchmarks --benchmark-only --benchmark-columns=mean,median,rounds
+
+# Benchmarks against another branch (BASE); SUMMARY is a file to append the table to;
+# RELEASE (a tag) is also compared, report only.
+BASE ?= origin/dev
+bench-compare:
+	scripts/bench_compare.sh "$(BASE)" "$(SUMMARY)" "$(RELEASE)"
+
+.PHONY: lint test check bench bench-compare

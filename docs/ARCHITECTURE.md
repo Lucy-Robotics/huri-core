@@ -48,7 +48,7 @@ the server checks, per session, that every one of them is produced.
 | [huri-core](https://github.com/Lucy-Robotics/huri-core) | the abstract framework: base classes, bus, server, plugin loader, checks, client SDK, `huri_core.testing`, and the `huri` command, which only dispatches to installed command plugins; also these pages, the front door of HuRI | nothing of HuRI's |
 | [huri-modules](https://github.com/Lucy-Robotics/huri-modules) | `packages/huri-events`, the curated `packages/huri-module-*`, `registry.toml` with its checker and `packages/huri-hub` (`huri hub`), `modules/<name>` submodules for verified third-party modules, install and deploy (whose installer also installs `huri-cli`) | `huri-core`, at `HURI_CORE_REF` in its `versions.env` file |
 | [huri-plugin-template](https://github.com/Lucy-Robotics/huri-plugin-template) | a starter module package, with its tests and CI | `huri-core` + `huri-events` |
-| [HuRI-CLI](https://github.com/Lucy-Robotics/HuRI-CLI) | a use case: the reference command-line client, its example client configs (with their `cli:` device section), and `huri-meta/`, the source of the `huri` convenience metapackage | `huri-core[client]` + `huri-events`, by version range |
+| [HuRI-CLI](https://github.com/Lucy-Robotics/HuRI-CLI) | a use case: the reference command-line client and its example client configs (with their `cli:` device section) | `huri-core[client]` + `huri-events`, by version range |
 | [HuRI-Lucy](https://github.com/Lucy-Robotics/HuRI-Lucy) | a use case: HuRI driving an InMoov robot — an actuation module (`inmoov`), its event package and the robot-side client | `huri-core[server]` / `huri-core[client]` + `huri-events` |
 
 Use cases — huri-cli, HuRI-Lucy,
@@ -119,6 +119,13 @@ its own, which no other package may use. A replacement for a curated event
 topics are part of what it is: a module consuming `acme.motion` is a different
 module, wired instead of the old one.
 
+A package claims its namespace just by registering topics in it: no extra
+field, and no rule tying it to the package name. On one server, two installed
+packages using the same namespace is a startup error. In the `huri-modules`
+registry, the first merged entry owns the namespace (`namespace =` in
+`registry.toml`, checked by CI), and the maintainers settle any dispute. One
+package, one namespace: a vendor that needs two publishes two event packages.
+
 **Commands are plugins too.** `huri-core` installs the `huri` console script,
 which knows no command of its own: `huri <name> [args...]` runs the entry point
 `<name>` of the `"huri.commands"` group, and `huri --help` lists the installed
@@ -146,7 +153,17 @@ Failures say which module, which topic, and which package is probably missing.
 (`requires.actuation` in its manifest, or `actuation = True` on its class); the
 server will not start with it unless the operator also lists it in
 `HURI_ACTUATION_MODULES`. Enabling a module is not consenting to it moving a
-robot, and neither is a verified mark.
+robot, and neither is a verified mark. Every event such a module receives,
+emits, or is cancelled in is logged on the `huri.audit` logger (server log by
+default, routable separately).
+
+**Both allow-lists are per deployment.** Every session on a server can use
+every module that server enables, actuation modules included. Tenants that need
+different module sets run separate deployments. Per-client rules would need
+client authentication, which HuRI does not have (`user_id` is whatever the
+client claims). So anyone who can reach `/session` can drive every enabled
+actuation module: keep that endpoint on a private network or behind a proxy
+that authenticates.
 
 ## A session
 
@@ -155,12 +172,33 @@ and those it will `subscribe` to — and gets `session_init`, or `session_error`
 with the reason. Events then travel as JSON frames or binary frames
 `[u16 topic length][topic][payload]`. On the server, the event bus runs each
 module on its input topic and publishes what it emits; a `Sender` per
-subscribed topic forwards to the client. The SDK delivers each topic's events
-to its handlers in order.
+subscribed topic forwards to the client.
+
+The SDK handles each topic's events one at a time, in arrival order, and
+different topics in parallel: audio chunks play in order, and slow playback
+never holds up text. If a handler raises, the error is logged and the next
+event still runs. Each topic's queue is unbounded, so nothing is dropped, but a
+handler slower than its stream keeps adding latency; keeping up is the use
+case's job.
+`on(..., concurrent=True)` opts a handler out of waiting: it starts on each
+event without waiting for its own earlier calls or for the topic's ordered
+handlers, and `close()` cancels the calls still running. On a topic that also
+has ordered handlers it sees each event when the ordered ones have finished the
+previous one. Use it for order-free work like logging or metrics.
 
 Heavy models run as Ray Serve deployments (`ModuleWithHandle`); module code
 imports their libraries lazily, so the head node can import every module to
 build the app whatever its hardware.
+
+An event policy (`huri_core/core/policy.py`) decides how the bus dispatches an
+event. `EventPolicy` just calls `graph.dispatch`; the default `InterruptPolicy`
+first cancels the running tasks that produce the topics listed in the session's
+`event_policy.interrupts` rule for that event, and what they started, then
+dispatches. This is bus cancellation, not a hardware stop. See
+[Interruptions](../README.md#interruptions-the-event-policy).
+A session's top-level `latest_only` topics give each subscriber of them one
+slot that newer values overwrite (`EventGraph(latest_only=...)`), see
+[Latest-only topics](../README.md#latest-only-topics).
 
 ## Building and trusting modules
 
@@ -224,7 +262,11 @@ installer (not the images) also installs `huri-cli` from `HURI_CLI_REF`, or
 - **huri-core**: semver, tags `X.Y.Z` (no `v`), `dev` → `main`, the version in
   `huri_core/__init__.py`. While `0.x`, a minor bump may break the public
   surface (base classes, client SDK and config schema, wire protocol, entry
-  point groups and manifest); a patch must not.
+  point groups and manifest); a patch must not. That surface, name by name,
+  is recorded in `tests/core/public_api.txt`: a change to it fails CI until
+  the record is regenerated (`python -m tests.core.test_public_api`), so the
+  pull request shows it. The server's internals (`session`, `factory`,
+  `sender`, `huri`) are not part of it.
 - **huri-modules**: its own semver and tags, same branches. A release is a
   tested set: every package (each with its own version in its
   `pyproject.toml`) and the one `huri-core` ref, `HURI_CORE_REF` in

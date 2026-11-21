@@ -1,13 +1,29 @@
 """The client SDK against a local websocket server standing in for HuRI."""
 
 import asyncio
+import io
 import json
+import logging
+import socket
+import ssl
+import threading
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest import mock
 
 import pytest
 import websockets
 
-from huri_core.core.client import HuRIClient, HuRISessionError, decode, encode
+from huri_core.core.client import (
+    ConnectionMessage,
+    HuRIClient,
+    HuRIModulesError,
+    HuRISessionError,
+    decode,
+    encode,
+    load_client_config,
+    read_server_modules,
+)
 from huri_core.core.dataclasses.config import ClientConfig
 from huri_core.core.events import BytesEvent, JsonEvent
 
@@ -20,9 +36,11 @@ class Text(JsonEvent):
 class FakeHuRI:
     """Accepts or rejects the handshake, records frames, sends scripted ones."""
 
-    def __init__(self, reply=None, outgoing=()):
+    def __init__(self, reply=None, outgoing=(), close_with=None, drop=False):
         self.reply = reply or {"type": "session_init", "user_id": "u-server"}
         self.outgoing = list(outgoing)
+        self.close_with = close_with
+        self.drop = drop
         self.handshake = None
         self.received = []
 
@@ -34,6 +52,12 @@ class FakeHuRI:
             return
         for frame in self.outgoing:
             await ws.send(frame)
+        if self.drop:  # no close frame, as a crash or a network cut
+            ws.transport.abort()
+            return
+        if self.close_with is not None:
+            await ws.close(*self.close_with)
+            return
         async for message in ws:
             self.received.append(decode(message))
 
@@ -150,6 +174,181 @@ def test_handlers_of_a_topic_run_in_order_and_survive_failures():
     assert run(scenario()) == ["0", "1", "3", "4"]
 
 
+def _tokens():
+    return [encode("huri.token", Text(t)) for t in ("Hel", "lo", "!")]
+
+
+def test_a_handler_is_sequential_by_default():
+    async def scenario():
+        seen, state = [], {"active": 0, "max": 0}
+        gate = asyncio.Event()
+
+        async def handler(event: Text):
+            state["active"] += 1
+            state["max"] = max(state["max"], state["active"])
+            seen.append(event.text)
+            await gate.wait()
+            state["active"] -= 1
+
+        async with FakeHuRI(outgoing=_tokens()) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on("huri.token", Text, handler)
+            async with client:
+                await until(lambda: len(seen) == 1)
+                await asyncio.sleep(0.05)
+                assert seen == ["Hel"]
+                gate.set()
+                await until(lambda: len(seen) == 3)
+        return seen, state["max"]
+
+    assert run(scenario()) == (["Hel", "lo", "!"], 1)
+
+
+def test_a_concurrent_handler_handles_events_in_parallel():
+    async def scenario():
+        started = []
+        release = asyncio.Event()
+
+        async def handler(event: Text):
+            started.append(event.text)
+            await release.wait()
+
+        async with FakeHuRI(outgoing=_tokens()) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on("huri.token", Text, handler, concurrent=True)
+            async with client:
+                await asyncio.wait_for(until(lambda: len(started) == 3), 1)
+                release.set()
+        return started
+
+    assert run(scenario()) == ["Hel", "lo", "!"]
+
+
+def test_a_concurrent_handler_does_not_hold_up_an_ordered_handler_on_the_same_topic():
+    async def scenario():
+        ordered = []
+        never = asyncio.Event()
+
+        async def stuck(event: Text):
+            await never.wait()
+
+        async def collect(event: Text):
+            ordered.append(event.text)
+
+        async with FakeHuRI(outgoing=_tokens()) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on("huri.token", Text, stuck, concurrent=True)
+            client.on("huri.token", Text, collect)
+            async with client:
+                await asyncio.wait_for(until(lambda: len(ordered) == 3), 1)
+        return ordered
+
+    assert run(scenario()) == ["Hel", "lo", "!"]
+
+
+def test_a_failing_concurrent_handler_does_not_stop_the_others(caplog):
+    async def scenario():
+        seen = []
+
+        async def handler(event: Text):
+            if event.text == "lo":
+                raise RuntimeError("handler bug")
+            seen.append(event.text)
+
+        async with FakeHuRI(outgoing=_tokens()) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on("huri.token", Text, handler, concurrent=True)
+            with caplog.at_level(logging.ERROR, logger="huri.client"):
+                async with client:
+                    await until(lambda: len(seen) == 2)
+                    await until(lambda: bool(caplog.records))
+        return seen
+
+    assert set(run(scenario())) == {"Hel", "!"}
+    assert any("huri.token" in r.getMessage() for r in caplog.records)
+
+
+def test_closing_the_client_cancels_concurrent_handlers_still_running():
+    async def scenario():
+        tasks = []
+        never = asyncio.Event()
+
+        async def handler(event: Text):
+            tasks.append(asyncio.current_task())
+            await never.wait()
+
+        async with FakeHuRI(outgoing=_tokens()) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on("huri.token", Text, handler, concurrent=True)
+            await client.connect()
+            await until(lambda: len(tasks) == 3)
+            await asyncio.wait_for(client.close(), 1)
+            # Checked before asyncio.run() shutdown cancels leftovers itself.
+            assert len(tasks) == 3
+            assert all(t.cancelled() for t in tasks)
+
+    run(scenario())
+
+
+def test_closing_the_client_cancels_a_concurrent_call_before_the_connection_closes(
+    caplog,
+):
+    async def scenario():
+        tasks, resumed = [], []
+
+        async def handler(event: Text):
+            tasks.append(asyncio.current_task())
+            await client.wait_closed()  # wakes as soon as the connection closes
+            resumed.append(event.text)
+            await client.send("toy.question", event)
+
+        frames = [encode("toy.token", Text("hello"))]
+        async with FakeHuRI(outgoing=frames) as server:
+            client = HuRIClient(server.url, modules={}, sends=["toy.question"])
+            client.on("toy.token", Text, handler, concurrent=True)
+            await client.connect()
+            await until(lambda: tasks)
+            with caplog.at_level(logging.ERROR, logger="huri.client"):
+                await asyncio.wait_for(client.close(), 1)
+            # Checked before asyncio.run() shutdown cancels leftovers itself.
+            assert tasks[0].cancelled()
+        return resumed
+
+    assert run(scenario()) == []
+    assert not caplog.records
+
+
+def test_closing_the_client_starts_no_new_concurrent_call():
+    async def scenario():
+        tasks, ends = [], []
+        never, gate = asyncio.Event(), asyncio.Event()
+
+        async def stuck(event: Text):
+            tasks.append(asyncio.current_task())
+            await never.wait()
+
+        async def gated(event: Text):
+            await gate.wait()
+
+        # "toy.end" is received after "b": once it is handled, "b" is queued.
+        frames = [encode("toy.token", Text(t)) for t in "ab"]
+        frames.append(encode("toy.end", Text("end")))
+        async with FakeHuRI(outgoing=frames) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on("toy.token", Text, stuck, concurrent=True)
+            client.on("toy.token", Text, gated)
+            client.on("toy.end", Text, lambda e: _append(ends, e))
+            await client.connect()
+            await until(lambda: ends and tasks)
+            gate.set()  # "a" ends during close(): "b" must not start
+            await asyncio.wait_for(client.close(), 1)
+            # Checked before asyncio.run() shutdown cancels leftovers itself.
+            assert all(t.cancelled() for t in tasks)
+        return len(tasks)
+
+    assert run(scenario()) == 1
+
+
 def test_subscribing_after_connecting_is_refused():
     async def scenario():
         async with FakeHuRI() as server:
@@ -171,6 +370,70 @@ def test_old_client_config_format_gets_a_migration_hint():
     legacy = {"user_id": "u", "interface_path": "x:y", "senders": {}, "hooks": {}}
     with pytest.raises(ValueError, match="subscribe.*send"):
         ClientConfig.from_dict(legacy)
+
+
+def session_with_log(log):
+    return {"user_id": "u", "modules": {"shout": {"name": "shout"}}, "log": log}
+
+
+def test_a_log_level_name_is_parsed_case_insensitively_and_round_trips():
+    log = {"modules": {"shout": "debug"}, "topics": {"echo.loud": "Warning"}}
+
+    config = ClientConfig.from_dict(session_with_log(log))
+
+    assert config.log.modules == {"shout": logging.DEBUG}
+    assert config.log.topics == {"echo.loud": logging.WARNING}
+    expected = {"modules": {"shout": "DEBUG"}, "topics": {"echo.loud": "WARNING"}}
+    assert config.log.to_dict() == expected
+    assert ClientConfig.from_dict(session_with_log(expected)).log == config.log
+    assert config.log.allows(logging.DEBUG, "echo.text", "shout")
+    assert not config.log.allows(logging.INFO, "echo.loud", "shout")
+    assert not config.log.allows(logging.INFO, "echo.loud")
+
+
+@pytest.mark.parametrize("level", ["LOUD", 10, None])
+def test_an_unknown_log_level_is_refused_by_the_config(level):
+    with pytest.raises(ValueError, match=f"'?{level}'?.*DEBUG"):
+        ClientConfig.from_dict(session_with_log({"topics": {"echo.loud": level}}))
+
+
+@pytest.mark.parametrize(
+    "log",
+    ["DEBUG", [], "", 0, {"modules": ["shout"]}, {"modules": []}, {"topics": "DEBUG"}],
+)
+def test_a_log_section_of_the_wrong_shape_is_refused_by_the_config(log):
+    with pytest.raises(ValueError, match="log"):
+        ClientConfig.from_dict(session_with_log(log))
+
+
+def test_the_log_level_of_an_unknown_module_id_is_refused_by_the_config():
+    with pytest.raises(ValueError, match=r"'stt'.*\['shout'\]"):
+        ClientConfig.from_dict(session_with_log({"modules": {"stt": "DEBUG"}}))
+
+
+def test_the_log_level_of_a_numeric_module_id_is_accepted_by_the_config():
+    raw = {"user_id": "u", "modules": {1: {"name": "shout"}}}
+    raw["log"] = {"modules": {1: "DEBUG"}}
+
+    assert ClientConfig.from_dict(raw).log.modules == {1: logging.DEBUG}
+
+
+def test_the_log_level_of_module_id_zero_filters_its_lines():
+    raw = {"user_id": "u", "modules": {0: {"name": "shout"}}}
+    raw["log"] = {"modules": {0: "WARNING"}}
+
+    log = ClientConfig.from_dict(raw).log
+
+    assert not log.allows(logging.INFO, "t", 0)
+    assert log.allows(logging.WARNING, "t", 0)
+
+
+def test_a_config_without_log_filters_nothing():
+    config = ClientConfig.from_dict({"user_id": "u", "modules": {}})
+
+    assert config.log.to_dict() == {}
+    assert config.log.allows(logging.DEBUG, "echo.loud", "shout")
+    assert ClientConfig.from_dict(session_with_log(None)).log == config.log
 
 
 def test_connect_kwargs_reach_websockets_and_lift_the_size_limit(monkeypatch):
@@ -211,3 +474,719 @@ def test_a_frame_larger_than_one_mib_is_received():
 
 async def _append(target, item):
     target.append(item)
+
+
+def _client_yaml(tmp_path, log=""):
+    path = tmp_path / "client.yaml"
+    path.write_text(
+        "huri_url: ws://127.0.0.1:1\nuser_id_file_path: "
+        f"{tmp_path / 'uid'}\nmodules:\n  shout:\n    name: shout\n{log}"
+    )
+    return path
+
+
+def _handshake_of_yaml_client(tmp_path, log=""):
+    config = load_client_config(str(_client_yaml(tmp_path, log)))
+
+    async def scenario():
+        async with FakeHuRI() as server:
+            client = HuRIClient.from_config(config)
+            client.url = server.url
+            async with client:
+                pass
+            return server.handshake
+
+    return run(scenario())
+
+
+def test_the_log_section_of_a_client_yaml_reaches_the_server_in_the_handshake(
+    tmp_path,
+):
+    log = "log:\n  modules:\n    shout: WARNING\n  topics:\n    toy.word: INFO\n"
+    assert _handshake_of_yaml_client(tmp_path, log)["log"] == {
+        "modules": {"shout": "WARNING"},
+        "topics": {"toy.word": "INFO"},
+    }
+
+
+def test_a_client_without_a_log_section_sends_the_same_handshake_as_before(tmp_path):
+    assert "log" not in _handshake_of_yaml_client(tmp_path)
+
+
+def test_the_client_logs_each_frame_it_sends_and_receives_at_debug(caplog):
+    caplog.set_level(logging.DEBUG, logger="huri.client")
+
+    async def scenario():
+        async with FakeHuRI(outgoing=[encode("toy.token", Text("ok"))]) as server:
+            client = HuRIClient(server.url, modules={}, sends=["toy.question"])
+            got = []
+            client.on("toy.token", Text, lambda e: _append(got, e))
+            async with client:
+                await client.send("toy.question", Text("hi"))
+                await until(lambda: got)
+
+    run(scenario())
+    lines = [(r.levelno, r.getMessage()) for r in caplog.records]
+    assert any(
+        lvl == logging.DEBUG and m.startswith("sent 'toy.question'") for lvl, m in lines
+    )
+    assert any(
+        lvl == logging.DEBUG and m.startswith("received 'toy.token'")
+        for lvl, m in lines
+    )
+
+
+def test_a_topic_set_to_info_has_no_traffic_lines_in_the_client_log(caplog):
+    caplog.set_level(logging.DEBUG, logger="huri.client")
+
+    async def scenario():
+        async with FakeHuRI(outgoing=[encode("toy.token", Text("ok"))]) as server:
+            client = HuRIClient(
+                server.url, modules={}, log={"topics": {"toy.token": "INFO"}}
+            )
+            got = []
+            client.on("toy.token", Text, lambda e: _append(got, e))
+            async with client:
+                await until(lambda: got)
+            return got
+
+    assert run(scenario()) == [Text("ok")]
+    assert "received 'toy.token'" not in caplog.text
+
+
+def test_a_sends_topic_set_to_info_has_no_sent_line_in_the_client_log(caplog):
+    caplog.set_level(logging.DEBUG, logger="huri.client")
+
+    async def scenario():
+        async with FakeHuRI() as server:
+            client = HuRIClient(
+                server.url,
+                modules={},
+                sends=["toy.question"],
+                log={"topics": {"toy.question": "INFO"}},
+            )
+            async with client:
+                await client.send("toy.question", Text("hi"))
+                await until(lambda: server.received)
+
+    run(scenario())
+    assert "sent 'toy.question'" not in caplog.text
+
+
+def test_a_client_logger_above_debug_never_summarizes_frames(caplog):
+    caplog.set_level(logging.INFO, logger="huri.client")
+    calls = []
+
+    @dataclass
+    class Spy(Text):
+        def summarize(self):
+            calls.append(1)
+            return "spy"
+
+    async def scenario():
+        async with FakeHuRI(outgoing=[encode("toy.token", Text("ok"))]) as server:
+            client = HuRIClient(server.url, modules={}, sends=["toy.question"])
+            got = []
+            client.on("toy.token", Spy, lambda e: _append(got, e))
+            async with client:
+                await client.send("toy.question", Spy("hi"))
+                await until(lambda: got)
+
+    run(scenario())
+    assert calls == []
+
+
+def test_a_client_given_an_unknown_log_level_fails_before_connecting():
+    with pytest.raises(ValueError, match="LOUD"):
+        HuRIClient(
+            "ws://127.0.0.1:1", modules={}, log={"topics": {"toy.token": "LOUD"}}
+        )
+
+
+def _recorder():
+    seen = []
+
+    async def record(message: ConnectionMessage):
+        seen.append(message)
+
+    return seen, record
+
+
+def test_an_opened_session_is_reported_as_connected():
+    seen, record = _recorder()
+
+    async def scenario():
+        async with FakeHuRI() as server:
+            client = HuRIClient(server.url, modules={})
+            client.on_connection(record)
+            async with client:
+                return list(seen)
+
+    assert run(scenario()) == [ConnectionMessage("connected")]
+
+
+def test_a_refused_session_is_reported_before_the_error_is_raised():
+    seen, record = _recorder()
+    reply = {
+        "type": "session_error",
+        "error": "unknown module 'tts'",
+        "server_modules": ["stt"],
+    }
+
+    async def scenario():
+        async with FakeHuRI(reply=reply) as server:
+            client = HuRIClient(server.url, modules={"tts": {"name": "tts"}})
+            client.on_connection(record)
+            with pytest.raises(HuRISessionError) as exc:
+                await client.connect()
+            return exc.value
+
+    error = run(scenario())
+    assert seen == [
+        ConnectionMessage(
+            "refused", detail="unknown module 'tts'", server_modules=["stt"]
+        )
+    ]
+    assert error.error == "unknown module 'tts'" and error.server_modules == ["stt"]
+
+
+def test_an_unreachable_server_is_reported_as_an_error():
+    seen, record = _recorder()
+    with socket.socket() as sock:  # a port nobody listens on once closed
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    client = HuRIClient(f"ws://127.0.0.1:{port}", modules={})
+    client.on_connection(record)
+    with pytest.raises(OSError) as exc:
+        run(client.connect())
+    assert seen == [
+        ConnectionMessage("error", detail=f"{type(exc.value).__name__}: {exc.value}")
+    ]
+
+
+def test_a_session_closed_by_the_server_is_reported_with_its_code():
+    seen, record = _recorder()
+
+    async def scenario():
+        async with FakeHuRI(close_with=(1011, "pipeline stopped")) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on_connection(record)
+            async with client:
+                await until(lambda: len(seen) == 2)
+
+    run(scenario())
+    assert seen == [
+        ConnectionMessage("connected"),
+        ConnectionMessage("closed", detail="pipeline stopped", code=1011),
+    ]
+
+
+def test_closing_the_client_reports_closed_once():
+    seen, record = _recorder()
+
+    async def scenario():
+        async with FakeHuRI() as server:
+            client = HuRIClient(server.url, modules={})
+            client.on_connection(record)
+            async with client:
+                pass
+
+    run(scenario())
+    assert seen == [
+        ConnectionMessage("connected"),
+        ConnectionMessage("closed", code=1000),
+    ]
+
+
+def test_a_failing_connection_handler_does_not_break_the_session():
+    async def broken(message: ConnectionMessage):
+        raise RuntimeError("handler bug")
+
+    async def scenario():
+        async with FakeHuRI() as server:
+            client = HuRIClient(server.url, modules={}, sends=["toy.question"])
+            client.on_connection(broken)
+            async with client:
+                await client.send("toy.question", Text("still here"))
+                await until(lambda: server.received)
+            return server.received
+
+    assert run(scenario()) == [("toy.question", {"text": "still here"})]
+
+
+def test_a_dropped_connection_is_reported_as_closed_with_1006():
+    seen, record = _recorder()
+
+    async def scenario():
+        async with FakeHuRI(drop=True) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on_connection(record)
+            async with client:
+                await client.wait_closed()
+
+    run(scenario())
+    assert seen == [
+        ConnectionMessage("connected"),
+        ConnectionMessage("closed", code=1006),
+    ]
+
+
+def test_a_slow_handler_gets_closed_when_the_client_exits_after_the_server():
+    seen = []
+
+    async def slow(message: ConnectionMessage):
+        await asyncio.sleep(0.05)
+        seen.append(("slow", message.status, message.code))
+
+    async def fast(message: ConnectionMessage):
+        seen.append(("fast", message.status, message.code))
+
+    async def scenario():
+        async with FakeHuRI(close_with=(1011, "pipeline stopped")) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on_connection(slow)
+            client.on_connection(fast)
+            async with client:
+                await client.wait_closed()
+
+    run(scenario())
+    assert seen == [
+        ("slow", "connected", None),
+        ("fast", "connected", None),
+        ("slow", "closed", 1011),
+        ("fast", "closed", 1011),
+    ]
+
+
+def test_a_connection_handler_can_close_the_client():
+    seen = []
+
+    async def scenario():
+        async with FakeHuRI(close_with=(1011, "pipeline stopped")) as server:
+            client = HuRIClient(server.url, modules={})
+
+            async def closing(message: ConnectionMessage):
+                if message.status == "closed":
+                    await client.close()
+                    seen.append("closed from a handler")
+
+            async def record(message: ConnectionMessage):
+                seen.append(message.status)
+
+            client.on_connection(closing)
+            client.on_connection(record)
+            await client.connect()
+            await until(lambda: "closed" in seen)
+            await client.close()
+
+    run(scenario())
+    assert seen == ["connected", "closed from a handler", "closed"]
+
+
+def test_a_reused_client_reports_each_session():
+    seen, record = _recorder()
+
+    async def scenario():
+        async with FakeHuRI() as server:
+            client = HuRIClient(server.url, modules={})
+            client.on_connection(record)
+            async with client:
+                pass
+            async with client:
+                pass
+
+    run(scenario())
+    assert [(m.status, m.code) for m in seen] == [
+        ("connected", None),
+        ("closed", 1000),
+        ("connected", None),
+        ("closed", 1000),
+    ]
+
+
+def test_an_event_handler_can_close_the_client():
+    seen = []
+
+    def dispatching():
+        return [
+            t
+            for t in asyncio.all_tasks()
+            if t.get_coro().__qualname__.endswith("_dispatch_loop")
+        ]
+
+    async def scenario():
+        frames = [encode("toy.token", Text("bye"))]
+        async with FakeHuRI(outgoing=frames) as server:
+            client = HuRIClient(server.url, modules={})
+
+            async def closing(event: Text):
+                await client.close()
+                seen.append(event.text)
+
+            client.on("toy.token", Text, closing)
+            await client.connect()
+            await until(lambda: seen and not dispatching())
+
+    run(scenario())
+    assert seen == ["bye"]
+
+
+def test_a_concurrent_handler_can_close_the_client():
+    seen, record = _recorder()
+
+    async def scenario():
+        calls = []
+        frames = [encode("toy.token", Text("bye"))]
+        async with FakeHuRI(outgoing=frames) as server:
+            client = HuRIClient(server.url, modules={})
+
+            async def closing(event: Text):
+                calls.append(asyncio.current_task())
+                await client.close()
+                calls.append(event.text)
+                await asyncio.sleep(0)  # cancelled here, its next await
+                calls.append("went on")
+
+            client.on("toy.token", Text, closing, concurrent=True)
+            client.on_connection(record)
+            await client.connect()
+            await asyncio.wait_for(until(lambda: calls and calls[0].done()), 1)
+            assert calls[0].cancelled()
+            await client.close()  # already closed: no second "closed"
+        return calls[1:]
+
+    assert run(scenario()) == ["bye"]
+    assert seen == [
+        ConnectionMessage("connected"),
+        ConnectionMessage("closed", code=1000),
+    ]
+
+
+def test_a_broken_handshake_is_reported_as_an_error():
+    seen, record = _recorder()
+
+    async def scenario():
+        async with FakeHuRI(reply={"type": "bogus"}) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on_connection(record)
+            with pytest.raises(HuRISessionError, match="unexpected first message"):
+                await client.connect()
+
+    run(scenario())
+    assert seen == [
+        ConnectionMessage(
+            "error",
+            detail="HuRISessionError: unexpected first message: {'type': 'bogus'}",
+        )
+    ]
+
+
+RULES = {"interrupts": {"acme.stop": ["huri.token"]}}
+
+
+def test_the_handshake_carries_the_event_policy(tmp_path):
+    section = "event_policy:\n  interrupts:\n    acme.stop: [huri.token]\n"
+    assert _handshake_of_yaml_client(tmp_path, section)["event_policy"] == RULES
+    client = HuRIClient("ws://127.0.0.1:1", modules={}, event_policy=RULES)
+    assert client.handshake()["event_policy"] == RULES
+
+
+def test_a_client_without_an_event_policy_sends_the_same_handshake_as_before(
+    tmp_path,
+):
+    assert "event_policy" not in _handshake_of_yaml_client(tmp_path)
+    assert "event_policy" not in HuRIClient("ws://x", modules={}).handshake()
+
+
+NOT_A_MAPPING = [["interrupts"], "interrupts", 1, False, [], "", 0]
+
+
+@pytest.mark.parametrize("event_policy", NOT_A_MAPPING)
+def test_an_event_policy_that_is_not_a_mapping_is_refused_by_the_config(
+    event_policy,
+):
+    raw = {"user_id": "u", "modules": {}, "event_policy": event_policy}
+    with pytest.raises(ValueError, match="event_policy"):
+        ClientConfig.from_dict(raw)
+
+
+@pytest.mark.parametrize("event_policy", NOT_A_MAPPING + [[["a", 1]]])
+def test_a_client_given_an_event_policy_that_is_not_a_mapping_fails_before_connecting(
+    event_policy,
+):
+    with pytest.raises(ValueError, match="event_policy"):
+        HuRIClient("ws://127.0.0.1:1", modules={}, event_policy=event_policy)
+
+
+SERVER_MODULES = {
+    "modules": ["vad", "stt", "tts", "think_stop"],
+    "details": {
+        "vad": {"input": "huri.audio", "output": "huri.voice"},
+        "stt": {"input": "huri.voice", "output": "huri.transcript"},
+        "tts": {"input": "huri.token", "output": "huri.speech"},
+        "think_stop": {"input": "huri.stop", "output": None},
+    },
+    "huri_core": "0.5.0",
+}
+
+
+@pytest.fixture
+def modules_server():
+    """A plain HTTP server standing in for HuRI's GET /modules. Set `.status`
+    and `.body`; `.requests` records (method, path, Upgrade header)."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            server.requests.append((self.command, self.path, self.headers["Upgrade"]))
+            body = server.body
+            if not isinstance(body, bytes):
+                body = json.dumps(body).encode()
+            self.send_response(server.status)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.status, server.body, server.requests = 200, SERVER_MODULES, []
+    server.session_url = f"ws://127.0.0.1:{server.server_port}/session"
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield server
+    server.shutdown()
+    server.server_close()
+    thread.join()
+
+
+def test_a_client_reads_the_servers_modules_from_its_session_url(modules_server):
+    got = run(read_server_modules(modules_server.session_url))
+    assert sorted(got["modules"]) == ["stt", "think_stop", "tts", "vad"]
+    assert got["details"]["stt"]["input"] == "huri.voice"
+    assert got["details"]["stt"]["output"] == "huri.transcript"
+    assert got["huri_core"] == "0.5.0"
+
+
+@pytest.mark.parametrize(
+    "session_url, modules_url",
+    [
+        ("ws://localhost:8000/session", "http://localhost:8000/modules"),
+        ("wss://huri.example.org/session", "https://huri.example.org/modules"),
+        (
+            "wss://huri.example.org:8443/huri/session",
+            "https://huri.example.org:8443/huri/modules",
+        ),
+        ("ws://localhost:8000/session/", "http://localhost:8000/modules"),
+        ("ws://u:p@localhost:8000/session?x=1", "http://localhost:8000/modules"),
+        ("ws://[::1]:8000/session", "http://[::1]:8000/modules"),
+    ],
+)
+def test_the_modules_url_is_derived_from_the_session_url(session_url, modules_url):
+    seen = []
+
+    def urlopen(request, **kwargs):
+        seen.append(request)
+        return io.BytesIO(json.dumps(SERVER_MODULES).encode())
+
+    with mock.patch("urllib.request.urlopen", urlopen):
+        run(read_server_modules(session_url))
+    assert seen == [modules_url]
+
+
+def test_a_module_that_emits_nothing_has_no_output_topic(modules_server):
+    got = run(read_server_modules(modules_server.session_url))
+    assert got["details"]["think_stop"]["output"] is None
+
+
+def test_reading_the_modules_opens_no_session(modules_server):
+    run(read_server_modules(modules_server.session_url))
+    assert modules_server.requests == [("GET", "/modules", None)]
+
+
+def test_an_unreachable_server_is_reported_with_its_url():
+    with socket.socket() as sock:  # a port nobody listens on once closed
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    with pytest.raises(HuRIModulesError) as exc:
+        run(read_server_modules(f"ws://127.0.0.1:{port}/session"))
+    assert f"http://127.0.0.1:{port}/modules" in str(exc.value)
+    assert "unreachable" in str(exc.value)
+
+
+def _trickle(sock, stop):
+    """Answers with headers, then one body byte every 0.05 s until `stop`."""
+    conn, _ = sock.accept()
+    with conn:
+        conn.recv(1024)
+        conn.sendall(b"HTTP/1.0 200 OK\r\nContent-Length: 1000\r\n\r\n")
+        while not stop.wait(0.05):
+            conn.sendall(b" ")
+
+
+def test_a_server_that_trickles_its_answer_times_out_as_a_whole():
+    stop = threading.Event()
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen()
+        threading.Thread(target=_trickle, args=(sock, stop), daemon=True).start()
+        url = f"ws://127.0.0.1:{sock.getsockname()[1]}/session"
+
+        async def read():
+            try:
+                await read_server_modules(url, timeout=0.3)
+            finally:
+                stop.set()  # lets the reading thread end
+
+        with pytest.raises(HuRIModulesError, match="did not answer in time"):
+            run(read())
+
+
+def test_a_url_that_is_not_a_huri_server_is_reported(modules_server):
+    modules_server.status, modules_server.body = 404, b"nope"
+    with pytest.raises(HuRIModulesError) as exc:
+        run(read_server_modules(modules_server.session_url))
+    assert f":{modules_server.server_port}/modules" in str(exc.value)
+    assert "404" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{"status": "ok"}, b"<html>", ["vad"], {"modules": ["vad"], "details": []}],
+)
+def test_an_answer_without_the_modules_list_is_reported(modules_server, body):
+    modules_server.body = body
+    with pytest.raises(HuRIModulesError, match="does not list modules"):
+        run(read_server_modules(modules_server.session_url))
+
+
+def test_details_the_server_adds_reach_the_client(modules_server):
+    args = [{"name": "language", "type": "str", "required": False, "default": "en"}]
+    modules_server.body = {
+        "modules": ["stt"],
+        "details": {
+            "stt": {"input": "huri.voice", "output": "huri.transcript", "args": args}
+        },
+    }
+    got = run(read_server_modules(modules_server.session_url))
+    assert got["details"]["stt"]["args"] == args
+
+
+def test_a_server_with_a_private_ca_is_read_with_the_clients_tls_context():
+    context = ssl.create_default_context()
+    seen = []
+
+    def urlopen(request, **kwargs):
+        seen.append(kwargs["context"])
+        return io.BytesIO(json.dumps(SERVER_MODULES).encode())
+
+    with mock.patch("urllib.request.urlopen", urlopen):
+        run(read_server_modules("wss://huri.example.org/session", ssl=context))
+    assert len(seen) == 1 and seen[0] is context
+
+
+@pytest.mark.parametrize(
+    "url", ["localhost:8000/session", "file:///etc/passwd", "ftp://h/session"]
+)
+def test_a_session_url_that_is_not_a_websocket_or_http_url_is_reported(url):
+    with mock.patch("urllib.request.urlopen") as urlopen:
+        with pytest.raises(HuRIModulesError) as exc:
+            run(read_server_modules(url))
+    assert url in str(exc.value)
+    urlopen.assert_not_called()
+
+
+def _raw_server(reply):
+    """A listening socket that sends `reply` (None: nothing) to each client."""
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    sock.listen()
+    threading.Thread(target=_serve_raw, args=(sock, reply), daemon=True).start()
+    return sock
+
+
+def _serve_raw(sock, reply):
+    try:
+        conn, _ = sock.accept()
+    except OSError:
+        return
+    with conn:
+        if reply is None:
+            conn.settimeout(2)
+            try:
+                conn.recv(1024)
+                conn.recv(1024)  # hold the connection until the client leaves
+            except OSError:
+                pass
+        else:
+            conn.recv(1024)
+            conn.sendall(reply)
+
+
+def test_a_port_that_is_not_http_is_reported_with_its_url():
+    with _raw_server(b"SSH-2.0-OpenSSH_9.0\r\n") as sock:
+        port = sock.getsockname()[1]
+        with pytest.raises(HuRIModulesError) as exc:
+            run(read_server_modules(f"ws://127.0.0.1:{port}/session"))
+    assert f"http://127.0.0.1:{port}/modules" in str(exc.value)
+
+
+def test_a_dropped_answer_is_reported_with_its_url():
+    reply = b"HTTP/1.0 200 OK\r\nContent-Length: 100\r\n\r\n{"
+    with _raw_server(reply) as sock:
+        port = sock.getsockname()[1]
+        with pytest.raises(HuRIModulesError) as exc:
+            run(read_server_modules(f"ws://127.0.0.1:{port}/session"))
+    assert f"http://127.0.0.1:{port}/modules" in str(exc.value)
+
+
+def test_a_non_numeric_port_is_reported():
+    with pytest.raises(HuRIModulesError, match="ws://h:abc/session"):
+        run(read_server_modules("ws://h:abc/session"))
+
+
+def test_a_server_that_never_answers_times_out_with_its_url():
+    with _raw_server(None) as sock:
+        port = sock.getsockname()[1]
+        with pytest.raises(HuRIModulesError) as exc:
+            run(read_server_modules(f"ws://127.0.0.1:{port}/session", timeout=0.2))
+    assert f"http://127.0.0.1:{port}/modules" in str(exc.value)
+    assert "did not answer in time" in str(exc.value)
+
+
+def test_the_handshake_carries_the_latest_only_topics(tmp_path):
+    assert _handshake_of_yaml_client(tmp_path, "latest_only: [acme.gaze]\n")[
+        "latest_only"
+    ] == ["acme.gaze"]
+    client = HuRIClient("ws://127.0.0.1:1", modules={}, latest_only=["acme.gaze"])
+    assert client.handshake()["latest_only"] == ["acme.gaze"]
+
+
+def test_a_client_without_latest_only_topics_sends_no_latest_only_key(tmp_path):
+    assert "latest_only" not in _handshake_of_yaml_client(tmp_path)
+    assert "latest_only" not in HuRIClient("ws://x", modules={}).handshake()
+
+
+def test_the_config_reads_latest_only_as_a_list_of_topics():
+    raw = {"user_id": "u", "modules": {}}
+    assert ClientConfig.from_dict(raw).latest_only == []
+    assert ClientConfig.from_dict({**raw, "latest_only": None}).latest_only == []
+    assert ClientConfig.from_dict({**raw, "latest_only": ["a"]}).latest_only == ["a"]
+
+
+NOT_A_TOPIC_LIST = ["acme.gaze", {"acme.gaze": 1}, 1, False, [1], ["a", None]]
+
+
+@pytest.mark.parametrize("latest_only", NOT_A_TOPIC_LIST)
+def test_latest_only_that_is_not_a_list_of_topics_is_refused_by_the_config(
+    latest_only,
+):
+    raw = {"user_id": "u", "modules": {}, "latest_only": latest_only}
+    with pytest.raises(ValueError, match="latest_only"):
+        ClientConfig.from_dict(raw)
+
+
+@pytest.mark.parametrize("latest_only", NOT_A_TOPIC_LIST)
+def test_a_client_given_bad_latest_only_fails_before_connecting(latest_only):
+    with pytest.raises(ValueError, match="latest_only"):
+        HuRIClient("ws://x", modules={}, latest_only=latest_only)

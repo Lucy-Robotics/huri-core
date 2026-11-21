@@ -5,15 +5,17 @@ rejections. No Ray cluster: the ingress class runs in-process on a fake socket.
 
 import asyncio
 import json
+import logging
 import struct
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import pytest
 
 from huri_core.core.events import BytesEvent, JsonEvent
 from huri_core.core.huri import HuRI
-from huri_core.core.module import Module
+from huri_core.core.module import Module, ModuleWithId
+from huri_core.core.policy import EventPolicy, InterruptPolicy
 
 # @serve.ingress subclasses the class it decorates (with an async __init__ for
 # Serve); its direct base is HuRI as written, which runs without Serve.
@@ -138,6 +140,79 @@ def test_a_frame_on_an_unknown_topic_is_dropped_not_fatal():
     assert ws.sent[-1] == {"topic": "toy.loud", "data": {"text": "STILL HERE"}}
 
 
+@pytest.mark.parametrize(
+    "bad_frame",
+    [
+        json.dumps({"type": "status"}),
+        json.dumps({"topic": "toy.word"}),
+        json.dumps([1]),
+        "not json",
+        b"\x00",
+        b"\x00\x02\xff\xfe",
+        json.dumps({"topic": "toy.word", "data": {"wrong": 1}}),
+    ],
+)
+def test_a_malformed_frame_is_dropped_not_fatal(bad_frame, serve_log):
+    ws = session(
+        FakeSocket(
+            handshake({"a": {"name": "upper"}}, ["toy.loud"], ["toy.word"]),
+            bad_frame,
+            json.dumps({"topic": "toy.word", "data": {"text": "still here"}}),
+        )
+    )
+    assert ws.sent[-1] == {"topic": "toy.loud", "data": {"text": "STILL HERE"}}
+    warnings = [r for r in serve_log.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "client u1" in warnings[0].message
+    assert "malformed frame" in warnings[0].message
+
+
+def test_malformed_frame_log_includes_the_exception_type(serve_log):
+    session(
+        FakeSocket(
+            handshake({"a": {"name": "upper"}}, ["toy.loud"], ["toy.word"]),
+            json.dumps({"type": "status"}),
+        )
+    )
+    warnings = [r for r in serve_log.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "dropping malformed frame: KeyError('topic')" in warnings[0].message
+
+
+def test_publish_failures_are_not_treated_as_malformed_frames(monkeypatch):
+    async def fail_publish(self, topic, event_data):
+        raise ValueError("publish failed")
+
+    monkeypatch.setattr("huri_core.core.session.Session.publish", fail_publish)
+    with pytest.raises(ValueError, match="publish failed"):
+        session(
+            FakeSocket(
+                handshake({"a": {"name": "upper"}}, ["toy.loud"], ["toy.word"]),
+                json.dumps({"topic": "toy.word", "data": {"text": "hi"}}),
+            )
+        )
+
+
+def test_good_frames_do_not_warn_and_disconnect_finalizes_modules(serve_log):
+    finalized = []
+
+    class FinalizingUpper(Upper):
+        async def finalize(self):
+            finalized.append(True)
+
+    ws = session(
+        FakeSocket(
+            handshake({"a": {"name": "upper"}}, ["toy.loud"], ["toy.word"]),
+            json.dumps({"topic": "toy.word", "data": {"text": "hi"}}),
+        ),
+        modules={"upper": FinalizingUpper},
+    )
+    assert ws.sent[-1] == {"topic": "toy.loud", "data": {"text": "HI"}}
+    assert not [r for r in serve_log.records if r.levelno == logging.WARNING]
+    assert "Client u1 disconnected" in logged(serve_log)
+    assert finalized == [True]
+
+
 def test_an_unknown_module_is_rejected_with_the_servers_modules():
     ws = session(FakeSocket(handshake({"a": {"name": "stt"}}, [], ["toy.word"])))
     (reply,) = ws.sent
@@ -167,6 +242,72 @@ class Servo(Module):
 
     async def process(self, data: Word):
         return None
+
+
+class Qag(Module):
+    input_type, output_type = "toy.word", "toy.loud"
+
+    def __init__(
+        self, use_emotion: bool = True, mode="parallel", emotion_timeout: float = 10.0
+    ):
+        pass
+
+    async def process(self, data: Word):
+        return None
+
+
+class Greeter(Module):
+    input_type, output_type = "toy.word", None
+
+    def __init__(self, greeting: str, x: "float" = 1.0, *, b: Optional[float] = None):
+        pass
+
+    async def process(self, data: Word):
+        return None
+
+
+class Think(ModuleWithId):
+    input_type, output_type = "toy.word", None
+
+    def __init__(self, _user_id, lead_s: float = 0.3):
+        pass
+
+    async def process(self, data: Word):
+        return None
+
+
+class Stt(Module):
+    input_type, output_type = "toy.word", None
+
+    def __init__(self, language="en", **kwargs):
+        pass
+
+    async def process(self, data: Word):
+        return None
+
+
+class Dock(Module):
+    input_type, output_type = "toy.word", None
+
+    def __init__(self, pose=object(), limit=float("inf"), tags=["a"], extra=None):
+        pass
+
+    async def process(self, data: Word):
+        return None
+
+
+class NoInitId(ModuleWithId):
+    input_type, output_type = "toy.word", None
+
+    async def process(self, data: Word):
+        return None
+
+
+def details_of(**modules):
+    server = Server(modules, {}, dict(EVENTS), actuating=[])
+    status, body = get(server, "/modules")
+    assert status == 200
+    return body["details"]
 
 
 def get(server, path: str):
@@ -256,9 +397,29 @@ def test_get_modules_lists_the_enabled_modules_their_topics_and_actuation():
                 "input": "toy.chunk",
                 "output": "toy.reversed",
                 "actuation": False,
+                "distribution": None,
+                "version": None,
+                "args": [],
+                "accepts_other_args": False,
             },
-            "servo": {"input": "toy.word", "output": None, "actuation": True},
-            "upper": {"input": "toy.word", "output": "toy.loud", "actuation": False},
+            "servo": {
+                "input": "toy.word",
+                "output": None,
+                "actuation": True,
+                "distribution": None,
+                "version": None,
+                "args": [],
+                "accepts_other_args": False,
+            },
+            "upper": {
+                "input": "toy.word",
+                "output": "toy.loud",
+                "actuation": False,
+                "distribution": None,
+                "version": None,
+                "args": [],
+                "accepts_other_args": False,
+            },
         },
         "huri_core": huri_core.__version__,
     }
@@ -268,6 +429,104 @@ def test_get_modules_lists_the_enabled_modules_their_topics_and_actuation():
     )
     assert ws.sent[0]["type"] == "session_error"
     assert ws.sent[0]["server_modules"] == body["modules"]
+
+
+def test_each_module_lists_its_arguments_with_their_defaults():
+    qag = details_of(qag=Qag)["qag"]
+    assert [a["name"] for a in qag["args"]] == [
+        "use_emotion",
+        "mode",
+        "emotion_timeout",
+    ]
+    assert qag["args"][1] == {
+        "name": "mode",
+        "type": None,
+        "required": False,
+        "default": "parallel",
+    }
+    assert qag["args"][2] == {
+        "name": "emotion_timeout",
+        "type": "float",
+        "required": False,
+        "default": 10.0,
+    }
+
+
+def test_an_arguments_type_is_listed_when_the_module_declares_it():
+    qag = details_of(qag=Qag, greeter=Greeter)
+    assert qag["qag"]["args"][2]["type"] == "float"
+    assert qag["qag"]["args"][1]["type"] is None
+    assert qag["greeter"]["args"][1]["type"] == "float"
+
+
+def test_an_argument_without_a_default_is_listed_as_required():
+    d = details_of(qag=Qag, greeter=Greeter)
+    assert d["greeter"]["args"][0] == {
+        "name": "greeting",
+        "type": "str",
+        "required": True,
+    }
+    assert all(a["required"] is False for a in d["qag"]["args"])
+
+
+def test_arguments_the_server_injects_are_not_listed():
+    args = details_of(think=Think)["think"]["args"]
+    assert [a["name"] for a in args] == ["lead_s"]
+
+
+def test_a_module_that_accepts_any_argument_says_so():
+    d = details_of(stt=Stt, qag=Qag)
+    assert [a["name"] for a in d["stt"]["args"]] == ["language"]
+    assert d["stt"]["accepts_other_args"] is True
+    assert d["qag"]["accepts_other_args"] is False
+
+
+def test_a_module_inheriting_the_framework_constructor_accepts_no_other_argument():
+    d = details_of(plain=NoInitId)["plain"]
+    assert d["args"] == [] and d["accepts_other_args"] is False
+
+
+def test_a_keyword_only_argument_is_listed():
+    args = details_of(greeter=Greeter)["greeter"]["args"]
+    assert args[2]["name"] == "b" and args[2]["default"] is None
+
+
+class Opaque(Module):
+    input_type, output_type = "toy.word", None
+    __signature__ = "unreadable"  # inspect.signature raises on it
+
+    async def process(self, data: Word):
+        return None
+
+
+def test_a_module_whose_signature_cannot_be_read_does_not_stop_the_server(
+    serve_log,
+):
+    d = details_of(odd=Opaque, qag=Qag)
+    assert d["odd"]["args"] == [] and d["odd"]["accepts_other_args"] is True
+    assert d["qag"]["args"]
+    assert "Opaque" in serve_log.text
+
+
+def test_a_default_that_is_not_a_plain_json_value_is_not_shown():
+    args = {a["name"]: a for a in details_of(dock=Dock)["dock"]["args"]}
+    for name in ("pose", "limit"):
+        assert args[name]["required"] is False and "default" not in args[name]
+    assert args["tags"]["default"] == ["a"]
+    assert "default" in args["extra"] and args["extra"]["default"] is None
+
+
+def test_the_existing_fields_of_a_module_are_unchanged():
+    qag = details_of(qag=Qag)["qag"]
+    assert {
+        k: qag[k] for k in ("input", "output", "actuation", "distribution", "version")
+    } == {
+        "input": "toy.word",
+        "output": "toy.loud",
+        "actuation": False,
+        "distribution": None,
+        "version": None,
+    }
 
 
 def test_actuating_is_a_required_argument():
@@ -310,3 +569,536 @@ def test_get_modules_imports_nothing(monkeypatch):
     monkeypatch.setattr(Upper, "__init__", forbidden)
     status, body = get(server, "/modules")
     assert status == 200 and body["modules"] == ["upper"]
+
+
+# --- per-session log levels -------------------------------------------------
+
+
+class Boom(Module):
+    input_type, output_type = "toy.word", "toy.loud"
+
+    async def process(self, data: Word):
+        raise RuntimeError("kaput")
+
+
+class Mic(Module):
+    input_type, output_type = "huri.audio.in", None
+
+    async def process(self, data: Chunk):
+        return None
+
+
+@pytest.fixture
+def serve_log(caplog):
+    """The server's log lines, whether or not importing ray cut the logger off
+    from the root handler."""
+
+    ray_logger = logging.getLogger("ray.serve")
+    ray_logger.addHandler(caplog.handler)
+    caplog.set_level(logging.INFO, logger="ray.serve")
+    yield caplog
+    ray_logger.removeHandler(caplog.handler)
+
+
+def word(text="hi"):
+    return json.dumps({"topic": "toy.word", "data": {"text": text}})
+
+
+def logged(caplog) -> str:
+    return "\n".join(r.getMessage() for r in caplog.records)
+
+
+def run(modules, log, *, subscribe=("toy.loud",), send=("toy.word",), incoming=()):
+    config = handshake(modules, list(subscribe), list(send))
+    if log is not None:
+        config["log"] = log
+    events = {**EVENTS, "huri.audio.in": Chunk}
+    server = Server(
+        {"upper": Upper, "reverse": Reverse, "boom": Boom, "mic": Mic},
+        {},
+        events,
+        (),
+    )
+    return session_on(server, FakeSocket(config, *(incoming or (word(),))))
+
+
+def test_a_module_set_to_warning_has_no_traffic_lines_in_the_server_log(serve_log):
+    ws = run(
+        {"shout": {"name": "upper"}, "back": {"name": "reverse"}},
+        {"modules": {"shout": "WARNING", "back": "DEBUG"}},
+        subscribe=("toy.loud", "toy.reversed"),
+        send=("toy.word", "toy.chunk"),
+        incoming=(word(), frame("toy.chunk", b"ab")),
+    )
+    assert {"topic": "toy.loud", "data": {"text": "HI"}} in ws.sent
+    text = logged(serve_log)
+    assert "upper (no distribution) -> 'toy.loud'" not in text
+    assert "reverse (no distribution) -> 'toy.reversed'" in text
+
+
+def test_a_topic_set_to_warning_has_no_traffic_lines_in_the_server_log(serve_log):
+    run(
+        {"shout": {"name": "upper"}},
+        {"topics": {"toy.loud": "WARNING"}},
+    )
+    text = logged(serve_log)
+    assert "publish topic='toy.loud'" not in text
+    assert "upper (no distribution) -> 'toy.loud'" not in text
+    assert "[Sender:toy.loud]" not in text
+    assert "publish topic='toy.word'" in text
+
+
+def test_log_levels_of_one_session_do_not_change_another_sessions_log(serve_log):
+    run({"shout": {"name": "upper"}}, {"topics": {"toy.word": "WARNING"}})
+    serve_log.clear()
+    run({"shout": {"name": "upper"}}, None)
+    assert "publish topic='toy.word'" in logged(serve_log)
+
+
+def test_a_session_without_a_log_section_logs_as_before(serve_log):
+    run({"shout": {"name": "upper"}}, None)
+    text = logged(serve_log)
+    assert "publish topic='toy.word'" in text
+    assert "upper (no distribution) -> 'toy.loud'" in text
+    assert "[Sender:toy.loud]" in text
+
+
+def test_a_module_failure_is_logged_whatever_the_sessions_levels(serve_log):
+    run({"bad": {"name": "boom"}}, {"modules": {"bad": "CRITICAL"}}, subscribe=())
+    errors = [
+        r
+        for r in serve_log.records
+        if "coroutine failed in boom (no distribution)" in r.message
+    ]
+    assert errors and errors[0].exc_info
+
+
+def test_a_session_asking_for_debug_does_not_lower_the_servers_log_level():
+    ray_logger = logging.getLogger("ray.serve")
+    before = ray_logger.level
+    ray_logger.setLevel(logging.INFO)
+    try:
+        run({"shout": {"name": "upper"}}, {"modules": {"shout": "DEBUG"}})
+        assert ray_logger.level == logging.INFO
+    finally:
+        ray_logger.setLevel(before)
+
+
+def test_a_session_config_with_an_unknown_log_level_is_rejected():
+    ws = run({"shout": {"name": "upper"}}, {"modules": {"shout": "LOUD"}})
+    (reply,) = ws.sent
+    assert reply["type"] == "session_error" and "LOUD" in reply["error"]
+    assert ws.closed == 1008
+
+
+def test_a_session_config_with_the_log_level_of_a_module_it_does_not_use_is_rejected():
+    ws = run({"shout": {"name": "upper"}}, {"modules": {"stt": "DEBUG"}})
+    (reply,) = ws.sent
+    assert reply["type"] == "session_error"
+    assert "stt" in reply["error"] and "shout" in reply["error"]
+    assert ws.closed == 1008
+
+
+def mic_frame():
+    return frame("huri.audio.in", b"\x00")
+
+
+def test_microphone_audio_is_no_longer_silenced_by_a_hardcoded_rule(serve_log):
+    run(
+        {"m": {"name": "mic"}},
+        None,
+        subscribe=(),
+        send=("huri.audio.in",),
+        incoming=(mic_frame(),),
+    )
+    assert "publish topic='huri.audio.in'" in logged(serve_log)
+
+
+def test_a_session_quiets_microphone_audio_through_its_log_section(serve_log):
+    run(
+        {"m": {"name": "mic"}},
+        {"topics": {"huri.audio.in": "WARNING"}},
+        subscribe=(),
+        send=("huri.audio.in",),
+        incoming=(mic_frame(),),
+    )
+    assert "publish topic='huri.audio.in'" not in logged(serve_log)
+
+
+def test_a_server_logger_above_info_never_summarizes_module_outputs(monkeypatch):
+    calls = []
+    monkeypatch.setattr(Word, "summarize", lambda self: calls.append(1) or "x")
+    ray_logger = logging.getLogger("ray.serve")
+    before = ray_logger.level
+    ray_logger.setLevel(logging.WARNING)
+    try:
+        ws = run({"shout": {"name": "upper"}}, None)
+    finally:
+        ray_logger.setLevel(before)
+    assert {"topic": "toy.loud", "data": {"text": "HI"}} in ws.sent
+    assert calls == []
+
+
+class RecordingPolicy(EventPolicy):
+    published = []
+
+    async def publish(self, graph, topic, data):
+        self.published.append(topic)
+        await super().publish(graph, topic, data)
+
+
+def test_swapping_the_policy_needs_no_module_change():
+    RecordingPolicy.published = []
+    server = Server(
+        {"upper": Upper, "reverse": Reverse},
+        {},
+        dict(EVENTS),
+        (),
+        event_policy=RecordingPolicy,
+    )
+    ws = session_on(
+        server,
+        FakeSocket(
+            handshake({"a": {"name": "upper"}}, ["toy.loud"], ["toy.word"]),
+            json.dumps({"topic": "toy.word", "data": {"text": "hi"}}),
+        ),
+    )
+    assert ws.sent[-1] == {"topic": "toy.loud", "data": {"text": "HI"}}
+    assert "toy.word" in RecordingPolicy.published
+
+
+def test_each_session_gets_its_own_interrupt_policy_by_default(monkeypatch):
+    # Serve re-creates the class: its methods resolve names in their own globals.
+    namespace = Server.run_session.__globals__
+    created = []
+
+    class Spy(namespace["Session"]):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            created.append(self.event_graph._policy)
+
+    monkeypatch.setitem(namespace, "Session", Spy)
+    server = Server({"upper": Upper}, {}, dict(EVENTS), ())
+    for _ in range(2):
+        session_on(
+            server,
+            FakeSocket(handshake({"a": {"name": "upper"}}, ["toy.loud"], ["toy.word"])),
+        )
+    assert [type(p) for p in created] == [InterruptPolicy, InterruptPolicy]
+    assert created[0] is not created[1]
+
+
+# --- per-session interrupt rules ----------------------------------------------
+
+
+class Stream(Module):
+    """Streams a long answer: one token, then the rest once `release` is set."""
+
+    input_type, output_type = "toy.word", "toy.token"
+    release: asyncio.Event
+    ended: asyncio.Event
+    outcome: list
+
+    async def process(self, data: Word):
+        try:
+            yield Word("first")
+            await self.release.wait()
+            yield Word("rest")
+        except asyncio.CancelledError:
+            self.outcome.append("cancelled")
+            raise
+        finally:
+            self.ended.set()
+
+
+class Halt(Module):
+    """Releases the stream: without an interruption, it would go on."""
+
+    input_type, output_type = "toy.stop", None
+
+    async def process(self, data: Word):
+        Stream.release.set()
+
+
+class LiveSocket(FakeSocket):
+    """A FakeSocket the test feeds frame by frame, telling it each frame sent."""
+
+    def __init__(self, handshake):
+        super().__init__(handshake)
+        self.inbox: "asyncio.Queue[dict]" = asyncio.Queue()
+        self.outbox: "asyncio.Queue[Any]" = asyncio.Queue()
+
+    def push(self, text=None):
+        message = (
+            {"type": "websocket.disconnect"}
+            if text is None
+            else {"type": "websocket.receive", "text": text}
+        )
+        self.inbox.put_nowait(message)
+
+    async def receive(self):
+        return await self.inbox.get()
+
+    async def send_json(self, message):
+        await super().send_json(message)
+        self.outbox.put_nowait(message)
+
+    async def send_bytes(self, payload):
+        await super().send_bytes(payload)
+        self.outbox.put_nowait(payload)
+
+
+def streaming_server(event_policy=InterruptPolicy):
+    events = {**EVENTS, "toy.token": Word, "toy.stop": Word}
+    return Server(
+        {"stream": Stream, "halt": Halt}, {}, events, (), event_policy=event_policy
+    )
+
+
+def streaming_handshake(event_policy, subscribe=("toy.token",)):
+    config = handshake(
+        {"llm": {"name": "stream"}, "halt": {"name": "halt"}},
+        subscribe=list(subscribe),
+        send=["toy.word", "toy.stop"],
+    )
+    config["event_policy"] = event_policy
+    return config
+
+
+def test_urgent_event_cuts_short_a_running_less_urgent_stream():
+    async def scenario():
+        Stream.release, Stream.ended, Stream.outcome = (
+            asyncio.Event(),
+            asyncio.Event(),
+            [],
+        )
+        ws = LiveSocket(
+            streaming_handshake({"interrupts": {"toy.stop": ["toy.token"]}})
+        )
+        session_task = asyncio.create_task(streaming_server().run_session(ws))
+        assert (await ws.outbox.get())["type"] == "session_init"
+        ws.push(word("question"))
+        assert (await ws.outbox.get())["data"] == {"text": "first"}
+
+        ws.push(json.dumps({"topic": "toy.stop", "data": {"text": "stop"}}))
+        await Stream.ended.wait()
+        ws.push()
+        await session_task
+        return ws
+
+    ws = asyncio.run(asyncio.wait_for(scenario(), timeout=10))
+    assert Stream.outcome == ["cancelled"]
+    tokens = [m["data"]["text"] for m in ws.sent if m.get("topic") == "toy.token"]
+    assert tokens == ["first"]
+
+
+@pytest.mark.parametrize(
+    "event_policy, culprit",
+    [
+        ({"interrupts": {"acme.stopp": ["huri.token"]}}, "acme.stopp"),
+        ({"interupts": {"acme.stop": ["huri.token"]}}, "interupts"),
+    ],
+)
+def test_a_bad_event_policy_configuration_is_refused_at_the_handshake(
+    event_policy, culprit
+):
+    ws = session_on(streaming_server(), FakeSocket(streaming_handshake(event_policy)))
+    (reply,) = ws.sent
+    assert reply["type"] == "session_error"
+    assert culprit in reply["error"]
+    assert ws.closed == 1008
+
+
+def test_interrupt_rules_may_name_every_topic_of_the_session():
+    """Module inputs and outputs, and the client's sent and subscribed topics."""
+
+    rules = {"interrupts": {"toy.stop": ["toy.token", "toy.word"]}}
+    ws = session_on(streaming_server(), FakeSocket(streaming_handshake(rules)))
+    assert ws.sent[0]["type"] == "session_init"
+
+
+def test_interrupt_rules_may_name_a_topic_the_client_does_not_subscribe_to():
+    """Interrupting the LLM's tokens while the client only hears the TTS."""
+
+    rules = {"interrupts": {"toy.stop": ["toy.token"]}}
+    handshake_ = streaming_handshake(rules, subscribe=())
+    ws = session_on(streaming_server(), FakeSocket(handshake_))
+    assert ws.sent[0]["type"] == "session_init"
+
+
+def test_interrupt_rules_sent_to_a_concurrent_server_are_refused():
+    rules = {"interrupts": {"toy.stop": ["toy.token"]}}
+    ws = session_on(
+        streaming_server(EventPolicy), FakeSocket(streaming_handshake(rules))
+    )
+    (reply,) = ws.sent
+    assert reply["type"] == "session_error"
+    assert "interrupts" in reply["error"] and "EventPolicy" in reply["error"]
+
+
+def test_a_concurrent_server_accepts_a_session_without_rules():
+    ws = session_on(streaming_server(EventPolicy), FakeSocket(streaming_handshake({})))
+    assert ws.sent[0]["type"] == "session_init"
+
+
+# --- latest-only topics -------------------------------------------------------
+
+
+def test_a_latest_only_declaration_naming_an_unknown_topic_is_refused():
+    config = {**streaming_handshake({}), "latest_only": ["toy.wrd"]}
+    ws = session_on(streaming_server(), FakeSocket(config))
+    (reply,) = ws.sent
+    assert reply["type"] == "session_error"
+    assert "toy.wrd" in reply["error"]
+    assert ws.closed == 1008
+
+
+class Slow(Module):
+    """Gated: the first value holds it busy until `release` is set."""
+
+    input_type, output_type = "toy.word", "toy.loud"
+    started: asyncio.Event
+    release: asyncio.Event
+    next_value: asyncio.Event
+    seen: list
+
+    async def process(self, data: Word):
+        self.seen.append(data.text)
+        if len(self.seen) == 1:
+            self.started.set()
+            await self.release.wait()
+        else:
+            self.next_value.set()
+
+
+def test_a_slow_subscriber_gets_only_the_newest_value():
+    async def scenario():
+        Slow.started, Slow.release, Slow.next_value, Slow.seen = (
+            asyncio.Event(),
+            asyncio.Event(),
+            asyncio.Event(),
+            [],
+        )
+        server = Server({"slow": Slow, "reverse": Reverse}, {}, dict(EVENTS), ())
+        config = handshake(
+            {"slow": {"name": "slow"}, "reverse": {"name": "reverse"}},
+            ["toy.reversed"],
+            ["toy.word", "toy.chunk"],
+        )
+        config["latest_only"] = ["toy.word"]
+        ws = LiveSocket(config)
+        task = asyncio.create_task(server.run_session(ws))
+        assert (await ws.outbox.get())["type"] == "session_init"
+        ws.push(word("busy"))
+        await asyncio.wait_for(Slow.started.wait(), 1)
+        for text in ("a", "b", "c"):
+            ws.push(word(text))
+        # Frames are handled in order: the marker's reply proves a, b, c were published.
+        ws.inbox.put_nowait(
+            {"type": "websocket.receive", "bytes": frame("toy.chunk", b"x")}
+        )
+        await asyncio.wait_for(ws.outbox.get(), 1)
+        Slow.release.set()
+        await asyncio.wait_for(Slow.next_value.wait(), 1)
+        ws.push()
+        await task
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=10))
+    assert Slow.seen == ["busy", "c"]
+
+
+class Talker(Module):
+    """Streams two words, holding on `gate` after the first; records what it saw."""
+
+    input_type, output_type = "toy.word", "toy.loud"
+    gate: asyncio.Event
+    log: list
+
+    async def process(self, data: Word):
+        yield Word("first")
+        try:
+            await self.gate.wait()
+        except asyncio.CancelledError:
+            self.log.append("stream cancelled")
+            raise
+        yield Word("second")
+
+    async def finalize(self):
+        self.log.append("finalized")
+
+
+def disconnect_mid_stream():
+    """Run a session whose client leaves while Talker is mid-stream."""
+    log: list = []
+    gate = asyncio.Event()
+    talker = type("T", (Talker,), {"gate": gate, "log": log})
+    ws = FakeSocket(
+        handshake({"a": {"name": "talker"}}, ["toy.loud"], ["toy.word"]),
+        json.dumps({"topic": "toy.word", "data": {"text": "hi"}}),
+    )
+    server = Server({"talker": talker}, {}, dict(EVENTS), ())
+
+    async def run():
+        await asyncio.wait_for(server.run_session(ws), timeout=10)
+        gate.set()  # a live stream would now emit "second"
+        for _ in range(10):  # a bounded drain: nothing more may be sent
+            await asyncio.sleep(0)
+
+    asyncio.run(run())
+    return ws, log
+
+
+def test_running_streams_are_cancelled_when_the_client_disconnects():
+    ws, log = disconnect_mid_stream()
+    assert "stream cancelled" in log
+    assert ws.sent == [
+        {"type": "session_init", "user_id": "u1"},
+        {"topic": "toy.loud", "data": {"text": "first"}},
+    ]
+
+
+def test_modules_are_still_finalized_after_the_cancellation():
+    _, log = disconnect_mid_stream()
+    assert log == ["stream cancelled", "finalized"]
+
+
+def test_a_module_ignoring_the_cancellation_does_not_block_finalize(
+    monkeypatch, caplog
+):
+    monkeypatch.setattr("huri_core.core.bus.CANCEL_TIMEOUT_S", 0.05)
+    log: list = []
+    release = asyncio.Event()
+
+    class Stubborn(Module):
+        input_type, output_type = "toy.word", "toy.loud"
+
+        async def process(self, data: Word):
+            yield Word("first")
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await release.wait()  # swallows the cancellation
+
+        async def finalize(self):
+            log.append("finalized")
+
+    ws = FakeSocket(
+        handshake({"a": {"name": "stubborn"}}, ["toy.loud"], ["toy.word"]),
+        json.dumps({"topic": "toy.word", "data": {"text": "hi"}}),
+    )
+    server = Server({"stubborn": Stubborn}, {}, dict(EVENTS), ())
+
+    async def run():
+        await asyncio.wait_for(server.run_session(ws), timeout=10)
+        release.set()  # let the stuck task end, so asyncio.run can close
+
+    bus_logger = logging.getLogger("ray.serve")
+    bus_logger.addHandler(caplog.handler)  # Ray may stop it propagating to root
+    try:
+        with caplog.at_level(logging.WARNING, logger="ray.serve"):
+            asyncio.run(run())
+    finally:
+        bus_logger.removeHandler(caplog.handler)
+
+    assert log == ["finalized"]
+    assert "stubborn (no distribution) ignored cancellation" in caplog.text

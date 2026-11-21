@@ -1,2 +1,2 @@
-# Bumped by the release PR only, see RELEASING.md.
-__version__ = "0.4.1"
+# Bumped by the release PR and the next-dev PR, see RELEASING.md.
+__version__ = "0.5.0"

@@ -111,7 +111,7 @@ shows a module, a server and a client in about 60 lines.
 | [huri-core](https://github.com/Lucy-Robotics/huri-core) | this one: the framework (module and event base classes, bus, server, plugin loader, compatibility checks, client SDK, `huri_core.testing`, the `huri` command), with no concrete module or event |
 | [huri-modules](https://github.com/Lucy-Robotics/huri-modules) | the curated set, released and tested together: [huri-events](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-events) (one event class per `huri.*` topic), the modules ([vad](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-module-vad), [stt](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-module-stt), [tag](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-module-tag), [emo](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-module-emo), [rag](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-module-rag), [tts](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-module-tts), [mov](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-module-mov)), the registry of verified modules and [huri-hub](https://github.com/Lucy-Robotics/huri-modules/tree/main/packages/huri-hub) (`huri hub`), install and deploy (`install.sh`, Docker, Helm) |
 | [huri-plugin-template](https://github.com/Lucy-Robotics/huri-plugin-template) | the starter for a new module (a GitHub template repository) |
-| [HuRI-CLI](https://github.com/Lucy-Robotics/HuRI-CLI) | the reference command-line client, a use case of the client SDK; also the source of `huri`, a convenience metapackage (`huri-core[client]` + `huri-cli`) |
+| [HuRI-CLI](https://github.com/Lucy-Robotics/HuRI-CLI) | the reference command-line client, a use case of the client SDK (`pip install huri-cli`) |
 | [HuRI-Lucy](https://github.com/Lucy-Robotics/HuRI-Lucy) | HuRI driving an InMoov robot: an actuation module, its events and the robot-side client |
 
 ### Built with HuRI
@@ -165,7 +165,7 @@ The base install (no extra) has no dependency at all: the base classes and
 package.
 
 A **module author** depends on a huri-core range in the package's
-`pyproject.toml`, e.g. `"huri-core[server]>=0.4,<0.5"` (see
+`pyproject.toml`, e.g. `"huri-core[server]>=0.5,<0.6"` (see
 [Versioning](#versioning-and-compatibility)). Modules that use the
 curated `huri.*` topics also depend on `huri-events`, which lives in
 huri-modules:
@@ -207,7 +207,8 @@ class Shout(Module):
 generator yielding any number of them (streaming: tokens, audio chunks...).
 A module is built once per session, with the `args:` of the client's config as
 keyword arguments; an optional `async def finalize(self)` runs when the
-session ends (to persist per-user state, for instance).
+session ends (to persist per-user state, for instance), after the work still
+running for that session has been cancelled (waited on up to 5 s).
 
 Two mixins cover what the server injects:
 
@@ -255,14 +256,16 @@ cannot silently fight over a topic: the server refuses to start instead.
 ### Sessions, the bus and the Sender
 
 A client opens a websocket on `/session` and sends a handshake: the modules of
-its pipeline, the topics it will `send`, the topics it `subscribe`s to.
+its pipeline, the topics it will `send`, the topics it `subscribe`s to, and
+optionally the `log` levels of its traffic.
 
 ```json
 {
   "user_id": "...",
   "modules": {"shout": {"name": "shout", "args": {}}},
   "send": ["echo.text"],
-  "subscribe": ["echo.loud"]
+  "subscribe": ["echo.loud"],
+  "log": {"modules": {"shout": "DEBUG"}, "topics": {"echo.text": "WARNING"}}
 }
 ```
 
@@ -274,7 +277,23 @@ event published on a topic runs every module subscribed to it, concurrently,
 and what they emit is published in turn. For each subscribed topic a `Sender`
 forwards the events to the client, framed as above. An incoming frame on a
 topic none of the server's enabled modules uses is dropped and logged; the
-session goes on.
+session goes on. A malformed JSON or binary frame, or event data that does
+not fit its topic, is also dropped with a warning naming the client; later
+frames are still processed.
+
+`log` sets the session's traffic log levels, per module id (a key of
+`modules`) and per topic, as `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`
+(any case); an unknown level or a module id the session does not have is a
+`session_error`. A line about an event on a topic, by a module, is logged only
+when its level reaches both the topic's and the module's level (no level: no
+filter), so `WARNING` on a chatty topic silences its traffic lines. A
+topic's `publish` line, the same for every event, is logged at most once a
+second, with how many publishes the previous line left out
+(`HURI_PUBLISH_LOG_WINDOW_S` on the server: `0` logs every one). Warnings
+and errors are never filtered, nor is the `huri.audit` trail of actuation
+modules, and `log` cannot raise the server's own `ray.serve` level, which the
+operator sets: a session's `DEBUG` shows nothing more than the server already
+logs.
 
 ### Plugins: entry points
 
@@ -315,7 +334,83 @@ class, or `requires.actuation = true` in its manifest), and the server refuses
 to start with it enabled unless its operator also lists it in
 `HURI_ACTUATION_MODULES`: a second, explicit consent, independent of
 `HURI_MODULES` and of any verified mark. Active actuation modules are logged as
-a warning at startup.
+a warning at startup. Every event an opted-in actuation module receives,
+emits, or is cancelled in is logged on the `huri.audit` logger, which goes to
+the server log by default and can be routed separately.
+
+### Interruptions: the event policy
+
+The bus starts every subscriber of an event at once, and nothing stops work
+already running. An **event policy** decides what else happens when an event
+is published. The default policy, `interrupt`, adds interrupt rules: an event
+on topic `T` first cancels every running module task that produces one of the
+listed topics, and everything those tasks already started (even after the
+producer finished); then `T`'s subscribers start. The task that publishes `T`
+is never cancelled. With no rules, nothing changes.
+
+A client sets rules per session, in its config (or
+`HuRIClient(..., event_policy={...})`):
+
+```yaml
+event_policy:
+  interrupts:
+    acme.stop: [huri.token, huri.audio.out]
+    huri.question: [huri.token]
+```
+
+A rule naming a topic the session does not have, or an unknown key, refuses
+the session (`session_error` naming the culprit). A 0.4 server silently ignores
+`event_policy`.
+
+The operator picks the policy class with `HURI_EVENT_POLICY`: `interrupt`
+(default), `concurrent` (the plain `EventPolicy` base: no rules accepted), an
+entry point name from the `huri.event_policies` group, or an import path. An
+unknown name stops the server at startup, with an error naming it and listing
+the installed policies. To write one, subclass
+`huri_core.core.policy.EventPolicy`: `async publish(graph, topic, data)` calls
+`graph.dispatch(topic, data)` by default and `check(topics)` validates the
+rules against the session's topics: the module input and output topics plus the
+client's send and subscribe topics, so interrupt rules may only name those. A
+client's `event_policy:` keys reach the policy class as constructor keyword
+arguments, so a custom policy's `__init__` signature is its handshake schema;
+a policy that takes no arguments (like `concurrent`) refuses any non-empty
+`event_policy`.
+
+What this is not:
+
+- Cancelling on the bus is **not a hardware safety stop**. Use the actuator's
+  own stop.
+- Do not trigger a rule from a stream topic (`huri.audio.in`, `huri.voice`): it
+  would cut the listed topics on every frame and starve them.
+- Remote model work (Ray Serve replicas) may keep running until the module
+  cancels its handle call. The cancelled tasks publish nothing more.
+- Audio already sent to the client keeps playing unless the use case flushes it.
+
+Design: [issue #139](https://github.com/Lucy-Robotics/huri-core/issues/139).
+
+### Latest-only topics
+
+By default each published value starts its own run of every subscriber, so a
+slow subscriber piles up runs on stale values. For a fast, stale-able stream (a
+gaze position, say), declare the topic **latest-only**: each subscriber of it
+then has at most one run in flight plus one waiting slot, and each newer value
+overwrites the waiting one, so a busy subscriber gets only the newest value.
+Declare it per session, in the config (or `HuRIClient(..., latest_only=[...])`),
+whatever the event policy:
+
+```yaml
+latest_only: [acme.gaze]
+```
+
+"Busy" means the subscriber's `process()` call for that topic has not
+finished: a streaming module is busy for its whole stream. It applies to what
+is sent to the client too. An interrupt rule that would cancel a subscriber's
+run also drops the value waiting for it. A topic the session does not have
+refuses the session (`session_error` naming it); an older server ignores the
+key and delivers every value.
+
+Never declare `huri.audio.in` or any stateful stream: VAD and STT keep state
+across frames, and dropped frames corrupt it.
 
 ### Manifests and the startup and session checks
 
@@ -329,7 +424,7 @@ input = { topic = "huri.motion", event = "huri_events.motion:Motion" }
 output = { topic = "acme.servo_angles", event = "huri_servo.events:ServoAngles" }  # omit for a terminal module
 events = ["huri-events>=0.1,<0.2"]               # optional
 requires = { gpu = false, actuation = false }    # optional
-huri_core = ">=0.4,<0.5"
+huri_core = ">=0.5,<0.6"
 ```
 
 (An unpackaged module's manifest sits next to its file, named after its class
@@ -367,9 +462,15 @@ so a client can build its handshake, or check it, before connecting.
 {
   "modules": ["shout"],
   "details": {
-    "shout": {"input": "echo.text", "output": "echo.loud", "actuation": false}
+    "shout": {
+      "input": "echo.text",
+      "output": "echo.loud",
+      "actuation": false,
+      "distribution": "huri-module-echo",
+      "version": "0.1.0"
+    }
   },
-  "huri_core": "0.4.0"
+  "huri_core": "0.5.0"
 }
 ```
 
@@ -378,9 +479,11 @@ list a rejected session gets as `server_modules`; an installed but disabled
 module is not in it. `details` gives each module's input and output topics
 (`output` is `null` for a module that emits nothing) and whether it may drive
 hardware (`actuation`, as the startup checks found it, from the class or its
-manifest). `huri_core` is the server's huri-core version, as a PEP 440
-string: a dev build reports a pre-release such as `0.4.0.dev0`, so compare it
-with `packaging.version`, not as an exact string. The answer is fixed at
+manifest). `distribution` and `version` name the installed package providing
+the module (both `null` for a module enabled by import path). `huri_core` is
+the server's huri-core version, as a PEP 440 string: a dev build reports a
+pre-release such as `0.4.0.dev0`, so compare it with `packaging.version`, not
+as an exact string. The answer is fixed at
 startup: the route loads and instantiates nothing.
 
 `actuation` is informational. The only safety gate is the operator's opt-in
@@ -408,12 +511,34 @@ async with client:
 
 Handlers of one topic run one at a time, in arrival order (audio playback
 needs that); different topics run concurrently; a failing handler is logged
-and does not stop the others. A refused session raises `HuRISessionError`
-(with `server_modules`). The same session can be written as a YAML file
-(`huri_url`, `modules`, `send`, `subscribe`), loaded with
+and does not stop the others. `client.on(..., concurrent=True)` opts a
+handler out of waiting: it starts on each event without waiting for its own
+earlier calls or for the topic's ordered handlers, and `close()` cancels the
+calls still running. On a topic that also has ordered handlers it sees each
+event when the ordered ones have finished the previous one. Use it for
+order-free work like logging or metrics.
+
+A refused session raises `HuRISessionError` (with `server_modules`).
+`client.on_connection(handler)`, at any time, gets a `ConnectionMessage` when
+the session is `connected`, `refused` (`detail`, `server_modules`), fails with
+an `error` (`detail` names the exception, which `connect` still raises) or is
+`closed` (once, with the websocket `code` and the reason in `detail`; a dropped
+connection gives 1006). `HuRIClient(..., log={"modules": {"shout": "DEBUG"}})`
+sends the `log` levels in the handshake, and the client logs each event it
+sends and receives at `DEBUG` on the `huri.client` logger, filtered by the
+`topics` levels. The same session can be written as a YAML file (`huri_url`,
+`modules`, `send`, `subscribe`, `log`), loaded with
 `load_client_config(path)` and turned into a client with
 `HuRIClient.from_config(...)`; `load_client_config` also gives the session
 this machine's `user_id`, created once and kept in the user config directory.
+`await read_server_modules(huri_url)` reads a server's enabled modules (its
+`GET /modules`) before any session, from the same session URL, with only
+`huri-core[client]`: `modules`, `details[name].input/output` (`output` is
+`None` for a module that emits nothing) and `huri_core`, as the server sends
+them. `ssl=` takes a TLS context (private CA), `timeout=` defaults to 5 s, and
+a failure raises `HuRIModulesError`, whose message names the URL. Like any
+`urllib` request, it goes through the `HTTP_PROXY`/`HTTPS_PROXY` of the
+environment (`NO_PROXY` to bypass it).
 huri-modules ships a commented
 [client_template.yaml](https://github.com/Lucy-Robotics/huri-modules/blob/main/config/client_template.yaml).
 [HuRI-CLI](https://github.com/Lucy-Robotics/HuRI-CLI), a separate repository,
@@ -487,7 +612,7 @@ my-echo/
 [project]
 name = "my-echo"
 version = "0.1.0"
-dependencies = ["huri-core>=0.4,<0.5"]
+dependencies = ["huri-core>=0.5,<0.6"]
 
 [project.entry-points."huri.modules"]
 shout = "my_echo:Shout"
@@ -567,10 +692,10 @@ From here:
 
 huri-core follows semver with tags `X.Y.Z` (no `v` prefix); `dev` is the
 development branch, `main` the latest release. While huri-core is `0.x`, a
-**minor** release (`0.4` → `0.5`) may break the public surface and a patch
+**minor** release (`0.5` → `0.6`) may break the public surface and a patch
 release never does, so modules and event packages pin a minor range:
-`huri-core>=0.4,<0.5`. A `dev` build (`0.5.0.dev0`, ...) is a pre-release:
-`>=0.5` excludes it until `0.5.0` is tagged. The public surface (base classes, client SDK and
+`huri-core>=0.5,<0.6`. A `dev` build (`0.6.0.dev0`, ...) is a pre-release:
+`>=0.6` excludes it until `0.6.0` is tagged. The public surface (base classes, client SDK and
 session schema, wire protocol, entry point groups, manifest) is listed in
 [RELEASING.md](RELEASING.md).
 
@@ -582,6 +707,7 @@ release:
 | ------------ | --------- | ----------------------------------------------- |
 | 0.1.x        | 0.4.x     | 0.1.x                                           |
 | 0.2.x        | 0.4.x     | 0.1.x, from 0.1.1                               |
+| 0.3.x        | 0.5.x     | 0.2.x                                           |
 
 huri-modules' CI also runs against huri-core's `dev`, so a breaking change here
 is seen there before it is released.
@@ -595,6 +721,8 @@ of `huri-core[client]` and release on their own.
 make lint     # black, isort, flake8 (rewrite in place) + mypy + link check
 make test     # pytest
 make check    # both
+make bench    # benchmarks of the hot paths (not part of `make test`)
+make bench-compare  # the same against origin/dev (BASE=...); fails on a mean more than 25% slower; RELEASE=<tag> adds a report-only comparison
 ```
 
 CI (`.github/workflows/ci.yml`) runs the lint and the link check, the tests
