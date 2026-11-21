@@ -290,6 +290,63 @@ async def test_pipeline_log_lines_name_the_session_and_the_module_version(graph_
 
 
 @pytest.mark.asyncio
+async def test_a_topics_publish_line_is_logged_once_per_window_then_counted(
+    graph_logs, monkeypatch
+):
+    import huri_core.core.bus as bus
+
+    now = [100.0]
+    monkeypatch.setattr(bus.time, "monotonic", lambda: now[0])
+    graph = EventGraph(session_id="s-1")
+    for _ in range(5):
+        await graph.publish("huri.audio.in", DummyEvent(0))
+    now[0] += bus.PUBLISH_LOG_WINDOW_S
+    await graph.publish("huri.audio.in", DummyEvent(0))
+    await graph.publish("huri.transcript", DummyEvent(0))
+
+    lines = [line for line in _graph_lines(graph_logs) if " publish " in line]
+    assert [line.split(" publish ")[1] for line in lines] == [
+        "topic='huri.audio.in' subscribers=[]",
+        "topic='huri.audio.in' subscribers=[] (+4 earlier, not logged)",
+        "topic='huri.transcript' subscribers=[]",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_zero_window_logs_every_publish(graph_logs, monkeypatch):
+    import huri_core.core.bus as bus
+
+    monkeypatch.setattr(bus, "PUBLISH_LOG_WINDOW_S", 0.0)
+    graph = EventGraph()
+    for _ in range(3):
+        await graph.publish("huri.audio.in", DummyEvent(0))
+    lines = [line for line in _graph_lines(graph_logs) if " publish " in line]
+    assert len(lines) == 3 and not any("not logged" in line for line in lines)
+
+
+@pytest.mark.parametrize(
+    "raw, seconds", [(None, 1.0), ("", 1.0), ("0", 0.0), ("2.5", 2.5)]
+)
+def test_the_publish_log_window_is_read_from_the_environment(monkeypatch, raw, seconds):
+    from huri_core.core.bus import _publish_log_window
+
+    if raw is None:
+        monkeypatch.delenv("HURI_PUBLISH_LOG_WINDOW_S", raising=False)
+    else:
+        monkeypatch.setenv("HURI_PUBLISH_LOG_WINDOW_S", raw)
+    assert _publish_log_window() == seconds
+
+
+@pytest.mark.parametrize("raw", ["-1", "nan", "one", "1s"])
+def test_a_bad_publish_log_window_stops_the_server(monkeypatch, raw):
+    from huri_core.core.bus import _publish_log_window
+
+    monkeypatch.setenv("HURI_PUBLISH_LOG_WINDOW_S", raw)
+    with pytest.raises(ValueError, match="HURI_PUBLISH_LOG_WINDOW_S"):
+        _publish_log_window()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["coroutine", "generator", "call"])
 async def test_a_failing_modules_traceback_names_its_package_version_and_session(
     graph_logs, kind
