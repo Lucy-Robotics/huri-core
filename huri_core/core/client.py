@@ -195,9 +195,19 @@ def decode(message: str | bytes) -> tuple[str, Any]:
     """(topic, raw wire data) of a frame."""
 
     if isinstance(message, bytes):
+        if len(message) < 2:
+            raise ValueError("binary frame has no topic length")
         topic_len = struct.unpack(">H", message[:2])[0]
+        if len(message) < 2 + topic_len:
+            raise ValueError("binary frame has a truncated topic")
         return message[2 : 2 + topic_len].decode(), message[2 + topic_len :]
     frame = json.loads(message)
+    if (
+        not isinstance(frame, dict)
+        or not isinstance(frame.get("topic"), str)
+        or "data" not in frame
+    ):
+        raise ValueError("text frame needs a string topic and data")
     return frame["topic"], frame["data"]
 
 
@@ -448,7 +458,21 @@ class HuRIClient:
     async def _receive_loop(self, ws: websockets.ClientConnection) -> None:
         try:
             async for message in ws:
-                topic, data = decode(message)
+                try:
+                    topic, data = decode(message)
+                except (ValueError, RecursionError) as error:
+                    if isinstance(message, bytes):
+                        kind, size = "binary", len(message)
+                    else:
+                        kind, size = "text", len(message.encode("utf-8"))
+                    # Exception text can include remote content; log its type only.
+                    logger.warning(
+                        "dropping malformed %s frame (%d bytes): %s",
+                        kind,
+                        size,
+                        type(error).__name__,
+                    )
+                    continue
                 sub = self._subs.get(topic)
                 if sub is None:
                     logger.warning("dropping frame on unsubscribed topic %r", topic)
