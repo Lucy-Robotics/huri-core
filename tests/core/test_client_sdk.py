@@ -89,6 +89,93 @@ def test_frames_round_trip():
     )
 
 
+@pytest.mark.parametrize(
+    "bad",
+    [
+        '{"type": "status"}',
+        "[]",
+        "null",
+        pytest.param("[" * 2000 + "]" * 2000, id="deeply-nested-json"),
+        '"not an object"',
+        "not JSON: PRIVATE_FRAME_CONTENT",
+        '{"topic": "toy.token"}',
+        '{"topic": [], "data": {}}',
+        '{"topic": 1, "data": {}}',
+        b"",
+        b"\x00",
+        b"\x00\x10toy",
+        b"\x00\x01\xff",
+    ],
+)
+def test_malformed_frames_are_skipped_without_stopping_delivery(caplog, bad):
+    async def scenario():
+        seen = []
+
+        async def handler(event):
+            seen.append(event.text)
+
+        frames = [
+            encode("toy.token", Text("before")),
+            bad,
+            encode("toy.token", Text("after")),
+        ]
+        async with FakeHuRI(outgoing=frames) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on("toy.token", Text, handler)
+            async with client:
+                await until(lambda: len(seen) == 2 or client._tasks[0].done())
+        return seen
+
+    with caplog.at_level(logging.WARNING, logger="huri.client"):
+        assert run(scenario()) == ["before", "after"]
+    warnings = [r for r in caplog.records if r.name == "huri.client"]
+    assert len(warnings) == 1
+    assert "malformed" in warnings[0].message
+    assert "PRIVATE_FRAME_CONTENT" not in warnings[0].message
+
+
+def test_malformed_frame_does_not_hide_the_connection_close():
+    async def scenario():
+        statuses = []
+
+        async def connection(message):
+            statuses.append(message)
+
+        async with FakeHuRI(outgoing=["[]"], close_with=(1000, "done")) as server:
+            client = HuRIClient(server.url, modules={})
+            client.on_connection(connection)
+            async with client:
+                await client.wait_closed()
+                await asyncio.gather(client._tasks[0], return_exceptions=True)
+        return statuses
+
+    statuses = run(scenario())
+    assert [message.status for message in statuses] == ["connected", "closed"]
+    assert statuses[-1].code == 1000
+    assert statuses[-1].detail == "done"
+
+
+def test_large_malformed_frame_logs_only_kind_size_and_error(caplog):
+    # The advertised topic length cuts a UTF-8 character in half.
+    bad = b"\x00\x01\xc3\xa9" + b"PRIVATE_FRAME_CONTENT" * 65536
+
+    async def scenario():
+        async with FakeHuRI(outgoing=[bad], close_with=(1000, "done")) as server:
+            async with HuRIClient(server.url, modules={}) as client:
+                await client.wait_closed()
+                await asyncio.gather(client._tasks[0], return_exceptions=True)
+
+    with caplog.at_level(logging.WARNING, logger="huri.client"):
+        run(scenario())
+    warnings = [r for r in caplog.records if r.name == "huri.client"]
+    assert len(warnings) == 1
+    assert "binary" in warnings[0].message
+    assert str(len(bad)) in warnings[0].message
+    assert "UnicodeDecodeError" in warnings[0].message
+    assert "PRIVATE_FRAME_CONTENT" not in caplog.text
+    assert len(warnings[0].message) < 200
+
+
 def test_handshake_declares_the_session_and_server_parses_it():
     async def scenario():
         async with FakeHuRI() as server:

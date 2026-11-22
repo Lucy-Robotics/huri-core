@@ -519,6 +519,9 @@ event when the ordered ones have finished the previous one. Use it for
 order-free work like logging or metrics.
 
 A refused session raises `HuRISessionError` (with `server_modules`).
+Malformed incoming frames are skipped with a warning containing only their
+kind, byte size and error type. Later frames and connection-close notifications
+still arrive; frame contents are not included in that warning.
 `client.on_connection(handler)`, at any time, gets a `ConnectionMessage` when
 the session is `connected`, `refused` (`detail`, `server_modules`), fails with
 an `error` (`detail` names the exception, which `connect` still raises) or is
