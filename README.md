@@ -126,7 +126,7 @@ uses.
 |---|---|---|
 | [HuRI-CLI](https://github.com/Lucy-Robotics/HuRI-CLI) | the reference client: microphone and prompt in, text, voice and a gesture view out | released |
 | [huri-playground](https://github.com/Lucy-Robotics/huri-playground) | a web page to talk with HuRI, then rate it (Godspeed and RoSAS questionnaires): visitors pick the modules, type or speak, hear the voice and see Mouse-Man gesture when the model is present | `0.1.0.dev0` |
-| [HuRI_ATP_testsite](https://github.com/Lucy-Robotics/HuRI_ATP_testsite) | the acceptance test site: a browser console that launches HuRI and drives a session, to exercise the features of the [beta test plan](docs/btp.md); the site calls it the ATP and uses the same feature IDs | its `master` still uses the HuRI repository from before the split |
+| [HuRI_ATP_testsite](https://github.com/Lucy-Robotics/HuRI_ATP_testsite) | the former acceptance test site: a browser console that launched HuRI and drove a session, to exercise the features of the [beta test plan](docs/archive/btp.md) | deprecated: the acceptance tests now use huri-playground |
 | [HuRI-Lucy](https://github.com/Lucy-Robotics/HuRI-Lucy) | an InMoov robot that listens, answers and gestures while it speaks: SMPL-X gestures to servo angles, and a robot-side client with its own safety limits | scaffold: the ranges are not calibrated and the fingers do not move yet |
 | HuRI_website_demo (private) | a demo website: a 3D talking character | private |
 
@@ -745,8 +745,8 @@ Layout:
   `huri.commands` entry points
 - `tests/core/` — everything above, with toy modules and events only
 - `docs/` — [ARCHITECTURE.md](docs/ARCHITECTURE.md) (how the HuRI repositories
-  fit), the beta test plan ([btp.md](docs/btp.md), [btp.pdf](docs/btp.pdf))
-  and `quality/` (the static analysis reports)
+  fit), `quality/` (the static analysis reports) and `archive/` (finished
+  deliverables, such as the beta test plan)
 - `scripts/check_links.py` — the link checker of README.md, CONTRIBUTING.md,
   RELEASING.md and docs/ (`--siblings DIR` also resolves deep links into
   checkouts of the other repositories, `--external` fetches web links);
