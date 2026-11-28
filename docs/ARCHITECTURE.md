@@ -216,7 +216,7 @@ A tier-3 entry's `source` says where its reviewed code is:
   `git+https://github.com/Lucy-Robotics/huri-modules.git@<ref>#subdirectory=packages/huri-module-stt`;
 - a verified third-party module stays in its author's repository, and
   `huri-modules` pins the reviewed tag as a git submodule:
-  `source = { git = "https://github.com/acme/huri-module-servo", tag = "0.1.0", submodule = "modules/servo" }`
+  `source = { git = "https://github.com/acme/servo", tag = "0.1.0", submodule = "modules/servo" }`
   (optionally `subdirectory = "<dir>"`), installed as `git+<git>@<tag>`. The
   submodule under `modules/<name>` must be checked out at that tag, so what CI
   tests is what users install.

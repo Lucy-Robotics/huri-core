@@ -115,7 +115,7 @@ T
 }
 
 s3_template() {
-  cd /work && git clone -q --branch dev "$GH/huri-plugin-template.git" huri-module-servo && cd huri-module-servo
+  cd /work && git clone -q --branch dev "$GH/huri-plugin-template.git" servo && cd servo
   git rev-parse HEAD
   ./rename.sh servo
   python3.12 -m venv .venv && export PATH="$PWD/.venv/bin:$PATH"
