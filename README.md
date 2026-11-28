@@ -302,10 +302,10 @@ installed distribution can provide them:
 
 ```toml
 [project.entry-points."huri.modules"]
-servo = "huri_servo.module:Servo"          # a client asks for it as `name: servo`
+servo = "servo.module:Servo"          # a client asks for it as `name: servo`
 
 [project.entry-points."huri.events"]
-"acme.servo_angles" = "huri_servo.events:ServoAngles"
+"acme.servo_angles" = "servo.events:ServoAngles"
 ```
 
 Installing the package is all it takes for the server to *know* it; enabling
@@ -421,7 +421,7 @@ tooling can reason about the module without importing it:
 name = "servo"                     # its huri.modules entry point name
 summary = "Gesture to servo angle arrays"
 input = { topic = "huri.motion", event = "huri_events.motion:Motion" }
-output = { topic = "acme.servo_angles", event = "huri_servo.events:ServoAngles" }  # omit for a terminal module
+output = { topic = "acme.servo_angles", event = "servo.events:ServoAngles" }  # omit for a terminal module
 events = ["huri-events>=0.1,<0.2"]               # optional
 requires = { gpu = false, actuation = false }    # optional
 huri_core = ">=0.5,<0.6"

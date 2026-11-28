@@ -5,8 +5,8 @@ A module package ships one manifest per module it registers, next to its code:
     name = "servo"                                   # its huri.modules entry point
     summary = "Gesture to servo angle arrays"
     input = { topic = "huri.motion", event = "huri_events.motion:Motion" }
-    output = { topic = "acme.servo_angles", event = "huri_events_servo:ServoAngles" }
-    events = ["huri-events>=0.2,<0.3", "huri-events-servo>=0.1,<0.2"]
+    output = { topic = "acme.servo_angles", event = "servo_events:ServoAngles" }
+    events = ["huri-events>=0.2,<0.3", "servo-events>=0.1,<0.2"]
     requires = { gpu = false, actuation = false }
     huri_core = ">=0.3,<0.4"
 
