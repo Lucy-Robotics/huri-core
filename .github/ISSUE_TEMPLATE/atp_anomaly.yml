@@ -1,0 +1,56 @@
+name: ATP anomaly
+description: A step of the acceptance test plan (ATP) did not give its expected result
+labels: ["atp-requirement", "needs triage"]
+body:
+  - type: input
+    id: scenario
+    attributes:
+      label: Scenario
+      description: The scenario's ID in the ATP.
+      placeholder: F9
+    validations:
+      required: true
+  - type: input
+    id: step
+    attributes:
+      label: Step
+      description: The number of the step that failed.
+      placeholder: "3"
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - "Blocking: the scenario cannot be finished"
+        - "Critical: the scenario finishes, but an expected result is wrong"
+        - "Minor: cosmetic or slow, but correct"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: The step's expected result, as the ATP words it.
+    validations:
+      required: true
+  - type: textarea
+    id: seen
+    attributes:
+      label: What you saw
+      description: What happened instead. Paste errors as text.
+    validations:
+      required: true
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions under test
+      description: "The ATP's \"Version under test\", or `pip list 2>/dev/null | grep -i huri`, and the commit of each checkout (`git rev-parse --short HEAD`)."
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Machine
+      description: OS and version, Python version, GPU (or none), RAM.
